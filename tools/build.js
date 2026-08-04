@@ -172,39 +172,95 @@ const idx = [
   },
 ];
 
-/* ------------------------------------------------------------ 節別予想.html 固有 */
+/* ------------------------------------------------------------ 節別予想.html 固有
+   こちらは J1 と J2 の2リーグぶんを埋め込む。
+   1リーグ = 学習データ（HIST）＋ 今季の日程とパラメータ（LEAGUES）。          */
+
+const j2hist = load("j2-matches.json").filter((m) => m.s <= 2025 && m.hg != null);
+const f26j2 = load("j2-2026.json");
+const paramsJ2 = load("params-j2.json");
+
+/** 1リーグぶんの学習データを圧縮する */
+function histOf(rows, file, re) {
+  const clubs = keepOrder(file, re, [...new Set(rows.flatMap((m) => [m.h, m.a]))].sort());
+  const idx = new Map(clubs.map((c, i) => [c, i]));
+  const base = Math.min(...rows.map((m) => m.s));
+  const data = [...rows]
+    .sort((a, b) => a.s - b.s || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) ||
+                    a.h.localeCompare(b.h, "ja"))
+    .map((m) => `${m.s - base}.${idx.get(m.h)}.${idx.get(m.a)}.${m.hg}.${m.ag}`)
+    .join(";");
+  return { clubs, data, base };
+}
+
+/** 1リーグぶんの今季日程を圧縮する */
+function fixturesOf(rows, teams) {
+  const idx = new Map(teams.map((c, i) => [c, i]));
+  let raw = "";
+  for (let w = 1; w <= 38; w++) {
+    const week = rows.filter((m) => m.round === w)
+      .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
+    for (const m of week) raw += AB[idx.get(m.h)] + AB[idx.get(m.a)];
+  }
+  const dates = Array.from({ length: 38 }, (_, i) => {
+    const ds = rows.filter((m) => m.round === i + 1 && m.date).map((m) => m.date).sort();
+    return ds[0] ?? null;
+  });
+  return { raw, dates };
+}
+
+const HIST_J1 = histOf(j1, "節別予想.html", /J1: \{ clubs: (\[[\s\S]*?\]), data:/);
+const HIST_J2 = histOf(j2hist, "節別予想.html", /J2: \{ clubs: (\[[\s\S]*?\]), data:/);
+const J2_2627 = keepOrder("節別予想.html", /J2: \{ label: "J2", teams: (\[[\s\S]*?\]),/,
+  [...new Set(f26j2.flatMap((m) => [m.h, m.a]))].sort());
+const FX_J1 = fixturesOf(f26, J1_2627);
+const FX_J2 = fixturesOf(f26j2, J2_2627);
+
+const arr = (a) => `[${a.map((c) => `"${c}"`).join(",")}]`;
+const num = (o) => `{ atkH:${o.atkH.toFixed(4)}, defH:${o.defH.toFixed(4)}, ` +
+                   `atkA:${o.atkA.toFixed(4)}, defA:${o.defA.toFixed(4)} }`;
+const pobj = (m) => "{ " + Object.entries(m)
+  .map(([k, v]) => `${k}: ${v >= 1e9 ? "1e9" : v}`).join(", ") + " }";
+
+const leagueBlock = (key, label, teams, fx, P, prom) =>
+  `  ${key}: {\n` +
+  `    label: "${label}",\n` +
+  `    teams: ${arr(teams)},\n` +
+  `    fixturesRaw:\n      ${wrap(fx.raw, 80, "      ")},\n` +
+  `    roundDates: ${JSON.stringify(fx.dates).replace(/","/g, '", "')},\n` +
+  `    P: ${pobj(P)},\n` +
+  `    promoted: ${num(prom)},\n` +
+  `  },\n`;
 
 const wk = [
-  ...edits,
   {
-    label: "J1（2026-27の20クラブ）",
-    // 直前の説明コメント（あれば）ごと置き換える。文面が変わっていても拾えるように緩くする
-    re: /(?:\/\*[^*]*FIXTURES_RAW[^*]*\*\/\n)?const J1 = \[[\s\S]*?\];/,
-    next: `/* 並び順は FIXTURES_RAW の添字と対応しているので変えないこと（tools/build.js が生成）*/\n` +
-      `const J1 = [\n` +
-      J1_2627.reduce((acc, c, i) => {
-        const line = i % 5 === 0 ? (i ? acc + "\n  " : "  ") : acc + " ";
-        return line + `"${c}",`;
-      }, "") + `\n];`,
+    label: "HIST（両リーグの学習データ）",
+    re: /const HIST = \{[\s\S]*?\n\};\n/,
+    next: `const HIST = {\n` +
+      `  J1: { clubs: ${arr(HIST_J1.clubs)},\n        data:\n  ${wrap(HIST_J1.data, 100, "  ")} },\n` +
+      `  J2: { clubs: ${arr(HIST_J2.clubs)},\n        data:\n  ${wrap(HIST_J2.data, 100, "  ")} },\n` +
+      `};\n`,
   },
   {
-    label: "FIXTURES_RAW",
-    // 末尾の ROUND_DATES まで含めて置き換える（何度実行しても増えないように）
-    re: /\/\* 2026-27 J1 全38節の対戦カード。[\s\S]*?const FIXTURES_RAW =\n[\s\S]*?;\n(?:\/\* 各節の開催日[\s\S]*?\n)?(?:const ROUND_DATES = .*\n)*/,
-    next: `/* 2026-27 J1 全38節の対戦カード。1試合＝ホーム・アウェイの2文字（J1 配列の添字）。\n` +
-      `   出典はＪリーグ公式データサイト（data/j1-2026.json）。tools/verify.js が\n` +
-      `   「各節に20クラブが1回ずつ」「順序付き380通りが重複なく全部そろう」まで検算している。 */\n` +
-      `const AB = "${AB}";\n` +
-      `const FIXTURES_RAW =\n  ${wrap(FIXTURES_RAW, 80, "  ")};\n` +
-      `/* 各節の開催日（先頭の試合の日付）。公式発表。未定の節は null */\n` +
-      `const ROUND_DATES = ${JSON.stringify(ROUND_DATES).replace(/","/g, '", "')};\n`,
+    label: "LEAGUES（両リーグの日程とパラメータ）",
+    re: /const LEAGUES = \{[\s\S]*?\n\};\n/,
+    next: `const LEAGUES = {\n` +
+      leagueBlock("J1", "J1", J1_2627, FX_J1, params.model, promoted.promotedAverage) +
+      leagueBlock("J2", "J2", J2_2627, FX_J2, paramsJ2.model, paramsJ2.newcomer) +
+      `};\n`,
+  },
+  {
+    label: "データ節の見出し",
+    re: /   0\) データ.*\n(?:      [^\n]*\n)*/,
+    next: `   0) データ（Ｊリーグ公式データサイト。J1 ${j1.length}試合 / J2 ${j2hist.length}試合、いずれも2015-2025）\n` +
+      `      tools/fetch.js → tools/parse.js → tools/build.js で生成。手で書き換えないこと\n`,
   },
   {
     label: "フッタの出典",
-    re: /    (?:日程|戦績)データ出典：[\s\S]*?（CC BY-SA）。<br>/,
+    re: /    (?:日程|戦績|データ)出典：[\s\S]*?<br>\n(?:    [^\n]*試合。<br>\n)?/,
     next: `    データ出典：<a href="https://data.j-league.or.jp/SFMS01/" target="_blank" rel="noopener">` +
       `Ｊリーグ公式データサイト</a><br>\n` +
-      `    2026-27 対戦カード380試合（試合日つき）／2015-2025 J1 全${j1.length}試合。<br>`,
+      `    2026-27 対戦カード J1・J2 各380試合（試合日つき）／学習データ J1 ${j1.length}試合・J2 ${j2hist.length}試合。<br>\n`,
   },
 ];
 

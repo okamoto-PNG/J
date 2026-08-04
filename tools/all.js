@@ -21,7 +21,8 @@ const refetch = process.argv.includes("--refetch");
 const steps = [
   { name: "取得", script: "fetch.js", args: refetch ? ["--force"] : [] },
   { name: "パース", script: "parse.js" },
-  { name: "パラメータ決定", script: "tune.js" },
+  { name: "パラメータ決定（J1）", script: "tune.js" },
+  { name: "パラメータ決定（J2）", script: "tune-j2.js" },
   { name: "日程補正の実測", script: "calibrate-schedule.js" },
   { name: "昇格クラブの実測", script: "calibrate-promoted.js" },
   { name: "会場・曜日の実測", script: "calibrate-venue.js" },

@@ -143,67 +143,108 @@ check("日程補正は θ=0（実測で効果なし）", params.fatigue.theta ==
 
 section("5. アプリ（HTML）とデータの整合");
 
-for (const file of ["index.html", "節別予想.html"]) {
-  const html = fs.readFileSync(path.join(ROOT, file), "utf8");
-  const CLUBS = JSON.parse(html.match(/const CLUBS = (\[[\s\S]*?\]);/)[1]);
-  // DATA は 100文字ずつ折って "…" + "…" の形で書かれているので、連結して1本に戻す
-  const dm = html.match(/const DATA =([\s\S]*?);\n/);
-  const DATA = [...dm[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]).join("");
-  const embedded = DATA.split(";").map((row) => {
-    const [s, h, a, hg, ag] = row.split(".").map(Number);
-    return { s: 2015 + s, h: CLUBS[h], a: CLUBS[a], hg, ag };
-  });
-  const key = (m) => `${m.s}|${m.h}|${m.a}|${m.hg}|${m.ag}`;
-  const A = new Set(j1.map(key)), B = new Set(embedded.map(key));
-  const onlyData = [...A].filter((k) => !B.has(k));
-  const onlyHtml = [...B].filter((k) => !A.has(k));
-  check(`${file} の埋め込み試合数が3588`, embedded.length === 3588, `${embedded.length}`);
-  check(`${file} の埋め込みデータが data/j1-matches.json と完全一致`,
-    onlyData.length === 0 && onlyHtml.length === 0,
-    `data側のみ${onlyData.length}件 / HTML側のみ${onlyHtml.length}件  例: ${onlyHtml[0] ?? onlyData[0] ?? ""}`);
+const j2hist = load("j2-matches.json").filter((m) => m.s <= 2025 && m.hg != null);
+const f26j2 = load("j2-2026.json");
+const paramsJ2 = load("params-j2.json");
+const promotedAvg = load("promoted.json").promotedAverage;
 
-  /* パラメータ定数の一致 */
-  const pm = html.match(/const P = \{([\s\S]*?)\};/);
-  if (pm) {
-    const got = {};
-    for (const mm of pm[1].matchAll(/(\w+):\s*([\d.eE+-]+)/g)) got[mm[1]] = Number(mm[2]);
-    const diff = Object.entries(params.model)
-      .filter(([k, v]) => got[k] !== undefined && !near(got[k], v, 1e-9))
-      .map(([k, v]) => `${k}: HTML ${got[k]} / params ${v}`);
-    check(`${file} のパラメータが data/params.json と一致`, diff.length === 0, diff.join(", "));
-  }
-
-  /* 昇格クラブの事前分布 */
-  const prm = html.match(/const PROMOTED = \{([^}]*)\}/);
-  if (prm) {
-    const got = {};
-    for (const mm of prm[1].matchAll(/(\w+):\s*([\d.]+)/g)) got[mm[1]] = Number(mm[2]);
-    const pr = load("promoted.json").promotedAverage;
-    const diff = Object.entries(pr).filter(([k, v]) => !near(got[k], v, 5e-5)).map(([k, v]) => `${k}: ${got[k]}≠${v}`);
-    check(`${file} の PROMOTED が data/promoted.json と一致`, diff.length === 0, diff.join(", "));
-  }
+/** HTML に埋め込まれたオブジェクトリテラルを取り出す */
+function appConst(html, name) {
+  const m = html.match(new RegExp("const " + name + " = (\\{[\\s\\S]*?\\n\\});"));
+  if (!m) return null;
+  return new Function("return " + m[1])();
 }
 
-/* 節別アプリの日程が公式データと一致するか */
+/** 圧縮データを試合の配列に戻す */
+const expand = (clubs, data) => data.split(";").map((row) => {
+  const [s, h, a, hg, ag] = row.split(".").map(Number);
+  return { s: 2015 + s, h: clubs[h], a: clubs[a], hg, ag };
+});
+const mkey = (m) => m.s + "|" + m.h + "|" + m.a + "|" + m.hg + "|" + m.ag;
+
+/* --- index.html（J1 単発型。従来の作りのまま） --- */
+{
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const CLUBS = JSON.parse(html.match(/const CLUBS = (\[[\s\S]*?\]);/)[1]);
+  const dm = html.match(/const DATA =([\s\S]*?);\n/);
+  const DATA = [...dm[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]).join("");
+  const embedded = expand(CLUBS, DATA);
+  const A = new Set(j1.map(mkey)), B = new Set(embedded.map(mkey));
+  check("index.html の埋め込み試合数が3588", embedded.length === 3588, String(embedded.length));
+  check("index.html の埋め込みデータが data/j1-matches.json と完全一致",
+    [...A].every((k) => B.has(k)) && [...B].every((k) => A.has(k)));
+
+  const got = {};
+  for (const mm of html.match(/const P = \{([\s\S]*?)\};/)[1].matchAll(/(\w+):\s*([\d.eE+-]+)/g)) got[mm[1]] = Number(mm[2]);
+  check("index.html のパラメータが data/params.json と一致",
+    Object.entries(params.model).every(([k, v]) => got[k] === undefined || near(got[k], v, 1e-9)));
+
+  const gp = {};
+  for (const mm of html.match(/const PROMOTED = \{([^}]*)\}/)[1].matchAll(/(\w+):\s*([\d.]+)/g)) gp[mm[1]] = Number(mm[2]);
+  check("index.html の PROMOTED が data/promoted.json と一致",
+    Object.entries(promotedAvg).every(([k, v]) => near(gp[k], v, 5e-5)));
+}
+
+/* --- 節別予想.html（J1・J2 の2リーグ） --- */
 const wk = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8");
-const J1LIST = JSON.parse(wk.match(/const J1 = (\[[\s\S]*?\]);/)[1].replace(/,\s*\]/, "]"));
+const HIST = appConst(wk, "HIST");
+const LEAGUES = appConst(wk, "LEAGUES");
 const AB = wk.match(/const AB = "([^"]*)";/)[1];
-const RAW = [...wk.matchAll(/^\s*"([0-9A-J]+)"\s*[+;]/gm)].map((m) => m[1]).join("");
-check("FIXTURES_RAW が760文字（38節×20文字）", RAW.length === 760, `${RAW.length}文字`);
-if (RAW.length === 760) {
-  const embeddedFix = [];
-  for (let w = 0; w < 38; w++)
-    for (let i = 0; i < 10; i++)
-      embeddedFix.push({
-        round: w + 1,
-        h: J1LIST[AB.indexOf(RAW[w * 20 + i * 2])],
-        a: J1LIST[AB.indexOf(RAW[w * 20 + i * 2 + 1])],
-      });
-  const kf = (m) => `${m.round}|${m.h}|${m.a}`;
-  const off = new Set(f26.map(kf)), emb = new Set(embeddedFix.map(kf));
-  const miss = [...off].filter((k) => !emb.has(k));
-  check("節別アプリの日程が公式データと完全一致（節・ホーム・アウェイ）",
-    miss.length === 0, `不一致 ${miss.length}件  例: ${miss.slice(0, 3).join(" / ")}`);
+
+check("節別予想.html に HIST と LEAGUES がある", !!HIST && !!LEAGUES);
+check("2リーグ（J1・J2）ぶんある",
+  !!(HIST && HIST.J1 && HIST.J2 && LEAGUES && LEAGUES.J1 && LEAGUES.J2));
+
+const LG_SPEC = [
+  { key: "J1", hist: j1,     fixtures: f26,   params: params.model,   prior: promotedAvg,          n: 3588 },
+  { key: "J2", hist: j2hist, fixtures: f26j2, params: paramsJ2.model, prior: paramsJ2.newcomer, n: j2hist.length },
+];
+
+for (const L of LG_SPEC) {
+  const H = HIST[L.key], G = LEAGUES[L.key];
+  if (!H || !G) { check(L.key + " のデータが埋め込まれている", false); continue; }
+
+  /* 学習データ */
+  const emb = expand(H.clubs, H.data);
+  const A = new Set(L.hist.map(mkey)), B = new Set(emb.map(mkey));
+  check(L.key + " の学習データが " + L.n + "試合", emb.length === L.n, String(emb.length));
+  check(L.key + " の学習データが data/ と完全一致",
+    [...A].every((k) => B.has(k)) && [...B].every((k) => A.has(k)));
+
+  /* パラメータと事前分布 */
+  check(L.key + " のパラメータが data/params" + (L.key === "J2" ? "-j2" : "") + ".json と一致",
+    Object.entries(L.params).every(([k, v]) => near(G.P[k], v, 1e-9)),
+    JSON.stringify(G.P));
+  check(L.key + " の事前分布（履歴なしクラブ）が data/ と一致",
+    ["atkH", "defH", "atkA", "defA"].every((k) => near(G.promoted[k], L.prior[k], 5e-5)));
+
+  /* 日程 */
+  check(L.key + " の fixturesRaw が760文字（38節×20文字）", G.fixturesRaw.length === 760, G.fixturesRaw.length + "文字");
+  check(L.key + " の所属クラブが20", G.teams.length === 20, String(G.teams.length));
+  if (G.fixturesRaw.length === 760 && G.teams.length === 20) {
+    const emb2 = [];
+    for (let w = 0; w < 38; w++) for (let i2 = 0; i2 < 10; i2++)
+      emb2.push({ round: w + 1,
+        h: G.teams[AB.indexOf(G.fixturesRaw[w * 20 + i2 * 2])],
+        a: G.teams[AB.indexOf(G.fixturesRaw[w * 20 + i2 * 2 + 1])] });
+    const kf = (m) => m.round + "|" + m.h + "|" + m.a;
+    const off = new Set(L.fixtures.map(kf)), e2 = new Set(emb2.map(kf));
+    check(L.key + " の日程が公式データと完全一致（節・ホーム・アウェイ）",
+      [...off].every((k) => e2.has(k)) && off.size === e2.size,
+      "公式" + off.size + "件 / 埋め込み" + e2.size + "件");
+    /* 総当たりの制約 */
+    let badWeek = 0;
+    for (let w = 1; w <= 38; w++) {
+      const t = new Set(emb2.filter((m) => m.round === w).flatMap((m) => [m.h, m.a]));
+      if (t.size !== 20) badWeek++;
+    }
+    check(L.key + " どの節も20クラブが1回ずつ", badWeek === 0, badWeek + "節で違反");
+    const pairs = new Set(emb2.map((m) => m.h + "|" + m.a));
+    check(L.key + " 順序付き380通りが重複なくそろう", pairs.size === 380, String(pairs.size));
+  }
+  check(L.key + " の全38節に開催日がある",
+    Array.isArray(G.roundDates) && G.roundDates.filter(Boolean).length === 38,
+    (G.roundDates ? G.roundDates.filter(Boolean).length : 0) + "/38");
 }
 
 /* ═══════════════════════════════════════════════════ 6. アプリのコードを実際に動かす */
@@ -220,20 +261,23 @@ function loadAppModel(file) {
   const script = html.match(/<script>\n?"use strict";([\s\S]*?)<\/script>/)[1];
   const cut = script.indexOf("   3) 状態");
   const body = script.slice(0, script.lastIndexOf("/* ===", cut));
-  // STATE は描画側で定義されるので、モデルだけ動かすための最小の器を足す
-  // 2つのアプリで fitRatings / predict の引数が違うので、呼び分けをここで吸収する
-  const src = `"use strict";\n${body}\nvar STATE = { cond: {}, fit: null };\n` +
-    `const NEUTRAL = { rest:6, acl:false, aclAway:false, cup:false, nextBig:false };\n` +
-    `return {\n` +
-    `  CLUBS, MATCHES, P, PROMOTED, outcome,\n` +
-    `  SEASON: typeof SEASON !== "undefined" ? SEASON : null,\n` +
-    `  J1: typeof J1 !== "undefined" ? J1 : null,\n` +
-    `  FIXTURES: typeof FIXTURES !== "undefined" ? FIXTURES : null,\n` +
-    `  ROUND_DATES: typeof ROUND_DATES !== "undefined" ? ROUND_DATES : null,\n` +
-    `  fit: () => { STATE.fit = fitRatings.length >= 2 ? fitRatings(MATCHES, SEASON) : fitRatings([]);\n` +
-    `               return STATE.fit; },\n` +
-    `  predict: (h, a) => predict.length >= 4 ? predict(h, a, NEUTRAL, NEUTRAL) : predict(h, a, false),\n` +
-    `};`;
+  const src = '"use strict";\n' + body + "\nvar STATE = { cond: {}, fit: null };\n" +
+    "const NEUTRAL = { rest:6, acl:false, aclAway:false, cup:false, nextBig:false };\n" +
+    "return {\n" +
+    "  outcome,\n" +
+    "  hasLeagues: typeof useLeague !== 'undefined',\n" +
+    "  use: (k) => { if (typeof useLeague !== 'undefined') useLeague(k); },\n" +
+    "  get CLUBS(){ return CLUBS; },\n" +
+    "  get MATCHES(){ return MATCHES; },\n" +
+    "  get P(){ return P; },\n" +
+    "  get PROMOTED(){ return PROMOTED; },\n" +
+    "  get TEAMS(){ return typeof TEAMS !== 'undefined' ? TEAMS : (typeof J1 !== 'undefined' ? J1 : null); },\n" +
+    "  get FIXTURES(){ return typeof FIXTURES !== 'undefined' ? FIXTURES : null; },\n" +
+    "  get ROUND_DATES(){ return typeof ROUND_DATES !== 'undefined' ? ROUND_DATES : null; },\n" +
+    "  fit: () => { STATE.fit = fitRatings.length >= 2 ? fitRatings(MATCHES, SEASON) : fitRatings([]);\n" +
+    "               return STATE.fit; },\n" +
+    "  predict: (h, a) => predict.length >= 4 ? predict(h, a, NEUTRAL, NEUTRAL) : predict(h, a, false),\n" +
+    "};";
   return new Function(src)();
 }
 
@@ -241,55 +285,72 @@ function loadAppModel(file) {
 function syntaxOk(file) {
   const html = fs.readFileSync(path.join(ROOT, file), "utf8");
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  try {
-    // 関数本体として構文解析させる。実行はしない（DOM が無いので実行はできない）
-    new Function(script);
-    return null;
-  } catch (e) { return e.message; }
+  try { new Function(script); return null; } catch (e) { return e.message; }
 }
 
 for (const file of ["index.html", "節別予想.html"]) {
   const err = syntaxOk(file);
-  check(`${file} のスクリプト全体が構文エラーなし`, err === null, err ?? "");
+  check(file + " のスクリプト全体が構文エラーなし", err === null, err ?? "");
 
   let app;
   try { app = loadAppModel(file); }
-  catch (e) { check(`${file} のモデルが Node で動く`, false, e.message); continue; }
-  check(`${file} のモデルが Node で動く`, true);
-  check(`${file} MATCHES が3588件に展開される`, app.MATCHES.length === 3588, `${app.MATCHES.length}`);
+  catch (e) { check(file + " のモデルが Node で動く", false, e.message); continue; }
+  check(file + " のモデルが Node で動く", true);
 
-  /* 学習して代表的な予想を出す */
-  const fit = app.fit();
-  const p1 = app.predict("鹿島", "浦和");
-  const p2 = app.predict("浦和", "鹿島");
-  check(`${file} 勝分敗の合計が1`, near(p1.hw + p1.dr + p1.aw, 1, 1e-9));
-  check(`${file} 期待得点が現実的（0.3〜3.5）`,
-    p1.lh > 0.3 && p1.lh < 3.5 && p1.la > 0.3 && p1.la < 3.5, `${p1.lh.toFixed(2)}-${p1.la.toFixed(2)}`);
-  check(`${file} ホームアドバンテージが効く（鹿島ホーム時の鹿島勝率 > 浦和ホーム時）`,
-    p1.hw > p2.aw, `${(p1.hw*100).toFixed(1)}% vs ${(p2.aw*100).toFixed(1)}%`);
-  console.log(`     鹿島ホーム: 鹿島勝ち ${(p1.hw*100).toFixed(1)}% / 分 ${(p1.dr*100).toFixed(1)}% / 浦和勝ち ${(p1.aw*100).toFixed(1)}%`);
-  console.log(`     浦和ホーム: 鹿島勝ち ${(p2.aw*100).toFixed(1)}%`);
+  /* 2リーグ対応なら両方まわす。index.html は J1 のみ */
+  const targets = app.hasLeagues ? LG_SPEC : [LG_SPEC[0]];
+  for (const L of targets) {
+    const tag = file + (app.hasLeagues ? " [" + L.key + "]" : "");
+    app.use(L.key);
+    check(tag + " MATCHES が " + L.n + "件に展開される", app.MATCHES.length === L.n, String(app.MATCHES.length));
+    const fit = app.fit();
 
-  /* 履歴なしクラブが昇格クラブの平均像から始まっているか */
-  const noHist = ["水戸", "千葉"].filter((c) => !fit.R[c]);
-  check(`${file} 水戸・千葉は J1 履歴なしとして扱われる`, noHist.length === 2, `${noHist.join(",")}`);
+    /* そのリーグの代表的な1カードで、確率と期待得点が壊れていないか */
+    const t = app.TEAMS ?? Object.keys(fit.R);
+    const [x, y] = [t[0], t[1]];
+    const p1 = app.predict(x, y), p2 = app.predict(y, x);
+    check(tag + " 勝分敗の合計が1", near(p1.hw + p1.dr + p1.aw, 1, 1e-9));
+    check(tag + " 期待得点が現実的（0.3〜3.5）",
+      p1.lh > 0.3 && p1.lh < 3.5 && p1.la > 0.3 && p1.la < 3.5,
+      p1.lh.toFixed(2) + "-" + p1.la.toFixed(2));
 
-  /* 2026-27 全380試合で確率が壊れないか（節別アプリのみ） */
-  if (app.FIXTURES) {
-    let bad = 0, minL = 9, maxL = 0;
-    for (const week of app.FIXTURES) for (const m of week) {
-      const p = app.predict(m.h, m.a);
-      if (!near(p.hw + p.dr + p.aw, 1, 1e-9)) bad++;
-      minL = Math.min(minL, p.lh, p.la); maxL = Math.max(maxL, p.lh, p.la);
+    /* ホームアドバンテージ。
+       クラブごとにホーム/アウェイを別々に持つモデルなので、
+       「アウェイの方が強いクラブ」では個別カードで逆転しうる（それが狙い）。
+       だからリーグ全体で見る。 */
+    check(tag + " リーグ平均でホームの方が得点が多い",
+      fit.lgH > fit.lgA,
+      "ホーム " + fit.lgH.toFixed(3) + " / アウェイ " + fit.lgA.toFixed(3) +
+      "（+" + ((fit.lgH / fit.lgA - 1) * 100).toFixed(1) + "%）");
+    let haOk = 0, haNg = 0;
+    for (const a1 of t) for (const b1 of t) {
+      if (a1 === b1) continue;
+      const q1 = app.predict(a1, b1), q2 = app.predict(b1, a1);
+      if (q1.hw > q2.aw) haOk++; else haNg++;
     }
-    check(`${file} 380試合すべてで確率の合計が1`, bad === 0, `壊れ ${bad}件`);
-    check(`${file} 380試合の期待得点が 0.3〜3.5 に収まる`, minL > 0.3 && maxL < 3.5,
-      `${minL.toFixed(2)}〜${maxL.toFixed(2)}`);
-    check(`${file} 全38節の開催日が埋まっている`,
-      app.ROUND_DATES && app.ROUND_DATES.filter(Boolean).length === 38,
-      `${app.ROUND_DATES ? app.ROUND_DATES.filter(Boolean).length : "なし"}/38`);
-    console.log(`     380試合の期待得点レンジ ${minL.toFixed(2)}〜${maxL.toFixed(2)}`);
-    console.log(`     第1節 ${app.ROUND_DATES?.[0]} 〜 第38節 ${app.ROUND_DATES?.[37]}`);
+    check(tag + " 大半のカードでホーム側が有利になる（8割以上）",
+      haOk / (haOk + haNg) >= 0.8,
+      haOk + "/" + (haOk + haNg) + "カード（逆転 " + haNg + "件＝アウェイに強いクラブ）");
+
+    if (L.key === "J1") {
+      const noHist = ["水戸", "千葉"].filter((c) => !fit.R[c]);
+      check(tag + " 水戸・千葉は J1 履歴なしとして扱われる", noHist.length === 2, noHist.join(","));
+    }
+
+    /* 今季の全380試合で確率が壊れないか */
+    if (app.FIXTURES) {
+      let bad = 0, minL = 9, maxL = 0, n = 0;
+      for (const week of app.FIXTURES) for (const m of week) {
+        const p = app.predict(m.h, m.a);
+        if (!near(p.hw + p.dr + p.aw, 1, 1e-9)) bad++;
+        minL = Math.min(minL, p.lh, p.la); maxL = Math.max(maxL, p.lh, p.la); n++;
+      }
+      check(tag + " " + n + "試合すべてで確率の合計が1", bad === 0, "壊れ " + bad + "件");
+      check(tag + " 期待得点が 0.3〜3.5 に収まる", minL > 0.3 && maxL < 3.5,
+        minL.toFixed(2) + "〜" + maxL.toFixed(2));
+      console.log("     " + tag + " 期待得点レンジ " + minL.toFixed(2) + "〜" + maxL.toFixed(2) +
+        " / 第1節 " + app.ROUND_DATES?.[0] + " 〜 第38節 " + app.ROUND_DATES?.[37]);
+    }
   }
 }
 
@@ -312,31 +373,27 @@ if (!fs.existsSync(pubFile) || !fs.existsSync(addonFile)) {
 } else {
   const pub = fs.readFileSync(pubFile, "utf8");
   const addon = fs.readFileSync(addonFile, "utf8").trim();
-  const i = pub.indexOf(S_TAG), j = pub.indexOf(E_TAG);
-  check("アドオンのブロックが入っている", i >= 0 && j > i);
+  const i2 = pub.indexOf(S_TAG), j2 = pub.indexOf(E_TAG);
+  check("アドオンのブロックが入っている", i2 >= 0 && j2 > i2);
 
-  /* アドオンを剥がした残りが本体そのものか（＝公開版が本体に追いついているか） */
-  const stripped = i >= 0 && j > i
-    ? pub.slice(0, i).replace(/\s*$/, "\n") + pub.slice(j + E_TAG.length).replace(/^\s*/, "\n")
+  const stripped = i2 >= 0 && j2 > i2
+    ? pub.slice(0, i2).replace(/\s*$/, "\n") + pub.slice(j2 + E_TAG.length).replace(/^\s*/, "\n")
     : pub;
-  const norm = (s) => s.replace(/\s*$/, "\n");
+  const norm = (s2) => s2.replace(/\s*$/, "\n");
   check("アドオンを除いた中身が 節別予想.html と完全一致", norm(stripped) === norm(wk),
     "publish/ で node build.js ../節別予想.html を実行すること");
   check("埋め込まれたアドオンが publish/sync-addon.html と一致",
-    i >= 0 && j > i && pub.slice(i, j + E_TAG.length).trim() === addon);
+    i2 >= 0 && j2 > i2 && pub.slice(i2, j2 + E_TAG.length).trim() === addon);
 
-  /* アドオンが本体から借りている名前。本体の作りが変わると噛み合わなくなる */
-  const missing = ["const FIXTURES =", "const STATE", "function save(", "function refit(", "function renderAll("]
+  const missing = ["const LEAGUES", "const STATE", "function save(", "function refit(", "function renderAll("]
     .filter((n) => !stripped.includes(n));
   check("アドオンが借りている名前が本体にそろっている", missing.length === 0, missing.join(" / "));
 
-  /* 公開物として出して良い中身か（publish/build.js と同じ観点を毎回確かめる） */
   const leaks = [/岡本/, /kakeru/i, /ge-creative/i, /GE00525/, /OneDrive/i, /C:\\/].filter((re) => re.test(pub));
   check("個人情報らしき文字列が入っていない", leaks.length === 0, leaks.join(", "));
   const ext = [...pub.matchAll(/<(?:script|link|img|iframe|source)[^>]*\b(?:src|href)="(?!data:|#)([^"]+)"/gi)];
   check("外部から読み込むリソースが0件（1ファイルで完結する）", ext.length === 0, ext.map((m) => m[1]).join(", "));
 
-  /* アドオン込みで構文が通るか。<script> が複数あるので全部見る */
   const broken = [];
   for (const m of pub.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
     try { new Function(m[1]); } catch (e) { broken.push(e.message); }
@@ -344,14 +401,18 @@ if (!fs.existsSync(pubFile) || !fs.existsSync(addonFile)) {
   check("全スクリプトが構文エラーなし（アドオン込み）", broken.length === 0, broken.join(" / "));
 
   /* 本体一致で担保されるが、落ちたとき原因が分かるように直接も測る */
-  const pp = {};
-  for (const mm of pub.match(/const P = \{([\s\S]*?)\};/)[1].matchAll(/(\w+):\s*([\d.eE+-]+)/g)) pp[mm[1]] = Number(mm[2]);
-  const pdiff = Object.entries(params.model)
-    .filter(([k, v]) => pp[k] !== undefined && !near(pp[k], v, 1e-9))
-    .map(([k, v]) => `${k}: 公開版 ${pp[k]} / params ${v}`);
-  check("パラメータが data/params.json と一致", pdiff.length === 0, pdiff.join(", "));
+  const pubL = appConst(pub, "LEAGUES");
+  check("公開版のパラメータが data/params*.json と一致",
+    !!pubL && LG_SPEC.every((L) => Object.entries(L.params).every(([k, v]) => near(pubL[L.key].P[k], v, 1e-9))),
+    pubL ? JSON.stringify({ J1: pubL.J1.P, J2: pubL.J2.P }) : "LEAGUES が読めない");
 
-  console.log(`     ${(pub.length / 1024).toFixed(0)}KB ＝ 本体 ${(stripped.length / 1024).toFixed(0)}KB ＋ アドオン ${(addon.length / 1024).toFixed(0)}KB`);
+  /* アドオンが両リーグに対応しているか（クラブコード表の取りこぼしは静かに効く） */
+  const addonLeagues = (addon.match(/J1:\s*\{/g) || []).length && (addon.match(/J2:\s*\{/g) || []).length;
+  check("アドオンが J1・J2 の両方を知っている", !!addonLeagues,
+    "sync-addon.html の WIKI 定義を確認すること");
+
+  console.log("     " + (pub.length / 1024).toFixed(0) + "KB ＝ 本体 " + (stripped.length / 1024).toFixed(0) +
+    "KB ＋ アドオン " + (addon.length / 1024).toFixed(0) + "KB");
 }
 
 /* ═══════════════════════════════════════════════════ 結果 */
