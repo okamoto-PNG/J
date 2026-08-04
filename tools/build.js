@@ -256,6 +256,55 @@ const wk = [
       `      tools/fetch.js → tools/parse.js → tools/build.js で生成。手で書き換えないこと\n`,
   },
   {
+    label: "画面内『使っているデータ』",
+    re: /      <h3>使っているデータ<\/h3>\n[\s\S]*?<\/p>\n/,
+    next:
+      `      <h3>使っているデータ</h3>\n` +
+      `      <ul>\n` +
+      `        <li><b>J1 2015-2025 の全${j1.length}試合</b>（Ｊリーグ公式データサイト・試合日つき）</li>\n` +
+      `        <li><b>J2 2015-2025 の全${j2hist.length}試合</b>（同上）</li>\n` +
+      `        <li><b>2026-27シーズンの対戦カード J1・J2 各380試合</b>（同上・試合日つき）</li>\n` +
+      `      </ul>\n` +
+      `      <p>日程データは「順序付きの対戦カードはシーズン中ちょうど1回」「各節に20クラブが1回ずつ」\n` +
+      `        という総当たりの制約で検算済みです。</p>\n`,
+  },
+  {
+    label: "画面内『節が進むとどう変わるか』",
+    re: /      <h3>節が進むとどう変わるか<\/h3>\n[\s\S]*?<\/ul>\n/,
+    next:
+      `      <h3>節が進むとどう変わるか</h3>\n` +
+      `      <p>今季の試合は、過去シーズンの<b>J1で${params.model.CUR_W}倍・J2で${paramsJ2.model.CUR_W}倍</b>の重みで\n` +
+      `        戦力の推定に混ざります。この値は勘ではなく、2018-2025を試合日順にバックテストし、\n` +
+      `        <b>学習区間(2018-22)と検証区間(2023-25)の両方で改善したときだけ採用する</b>という規則で決めました。</p>\n` +
+      `      <ul>\n` +
+      `        <li>J2 のほうが今季を重く見ます（${paramsJ2.model.CUR_W} 対 ${params.model.CUR_W}）。\n` +
+      `          記憶の長さも J2 は短め（HALF_LIFE ${paramsJ2.model.HALF_LIFE} 対 ${params.model.HALF_LIFE}）で、\n` +
+      `          <b>J2 は入れ替わりが激しいぶん、古い成績があてにならない</b>ということです</li>\n` +
+      `        <li>対戦相性（H2H）は<b>実測すると有害</b>でした。効き幅をほぼ無効（H2H_K=${params.model.H2H_K}）にしています</li>\n` +
+      `        <li>中N日などの日程補正も<b>効果を検出できず</b>、既定では何も効きません</li>\n` +
+      `      </ul>\n`,
+  },
+  {
+    label: "画面内『どのくらい当たるのか』",
+    re: /      <h3>どのくらい当たるのか<\/h3>\n[\s\S]*?<\/p>\n/,
+    next: (() => {
+      const a1 = params.accuracy, a2 = paramsJ2.accuracy;
+      const p = (x) => (x * 100).toFixed(1);
+      return `      <h3>どのくらい当たるのか</h3>\n` +
+        `      <p>試合日順のバックテスト（その試合の前日までの情報だけで予測する）の結果です。</p>\n` +
+        `      <ul>\n` +
+        `        <li><b>J1</b>：的中率 <b>${p(a1.hitRate)}%</b>／log loss <b>${a1.logLoss.toFixed(4)}</b>\n` +
+        `          （常にホーム勝ちなら ${p(a1.baselineHitRate)}%／${a1.baselineLogLoss.toFixed(4)}）　${a1.matches}試合</li>\n` +
+        `        <li><b>J2</b>：的中率 <b>${p(a2.hitRate)}%</b>／log loss <b>${a2.logLoss.toFixed(4)}</b>\n` +
+        `          （同 ${p(a2.baselineHitRate)}%／${a2.baselineLogLoss.toFixed(4)}）　${a2.matches}試合</li>\n` +
+        `      </ul>\n` +
+        `      <p>正直に言うと<b>この程度です</b>。一様に1/3ずつと答えると log loss は 1.0986 なので、\n` +
+        `        ランダムよりは明確に良い、という水準にとどまります。サッカーは本質的に読めない競技で、\n` +
+        `        ブックメーカーのオッズでも log loss は 1.0 前後です。\n` +
+        `        <b>J2 のほうが当てにくい</b>のも数字に出ています。</p>\n`;
+    })(),
+  },
+  {
     label: "フッタの出典",
     re: /    (?:日程|戦績|データ)出典：[\s\S]*?<br>\n(?:    [^\n]*試合。<br>\n)?/,
     next: `    データ出典：<a href="https://data.j-league.or.jp/SFMS01/" target="_blank" rel="noopener">` +
@@ -318,12 +367,6 @@ const extra = [
     next: ` * 2016-2025の昇格${promoted.sampleClubs}クラブ（${promoted.sampleAppearances}試合ぶんの出場）から実測した。\n` +
       ` * ホームとアウェイでリーグ平均得点が違う（` +
       `${promoted.leagueAverage.home.toFixed(3)} 対 ${promoted.leagueAverage.away.toFixed(3)}）ので、`,
-  },
-  {
-    file: "節別予想.html",
-    label: "画面内のデータ出典",
-    re: /<li><b>2015-2025年のJ1 全3588試合<\/b>（Wikipedia[^<]*）<\/li>/,
-    next: `<li><b>2015-2025年のJ1 全${j1.length}試合</b>（Ｊリーグ公式データサイト・試合日つき）</li>`,
   },
 ];
 
