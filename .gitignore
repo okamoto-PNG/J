@@ -1,0 +1,9 @@
+# publish/ は独立したリポジトリ（公開用の成果物）なので、ここでは追わない。
+# 中身は publish/ 側の git が持っている。
+/publish/
+
+# エディタ・OS が勝手に作るもの
+.DS_Store
+Thumbs.db
+*.swp
+node_modules/
