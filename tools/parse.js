@@ -156,21 +156,29 @@ const j1next = j1all.filter((m) => m.s === 2026);
 /* ルヴァン杯・J2 */
 const ylc = years(2015, 2026).flatMap((y) => parseFile("ylc", y));
 const j2 = years(2015, 2026).flatMap((y) => parseFile("j2", y));
+/* J2 も J1 と同じく「学習用」と「予想対象」に分ける。
+   j2-matches.json は昇格クラブの評価に使われているので中身を変えない（2026も含んだまま）。
+   予想対象だけを別ファイルに出す。 */
+const j2next = j2.filter((m) => m.s === 2026);
 
 write("j1-matches.json", j1hist);
 write("j1-2026.json", j1next);
 write("ylc-matches.json", ylc);
 write("j2-matches.json", j2);
+write("j2-2026.json", j2next);
 
 /* クラブ表記の一覧。将来 表記が変わったときに気づけるように残す */
 const seen = new Set([...j1all, ...ylc, ...j2].flatMap((m) => [m.h, m.a]));
 const j1_2627 = [...new Set(j1next.flatMap((m) => [m.h, m.a]))].sort();
+const j2_2627 = [...new Set(j2next.flatMap((m) => [m.h, m.a]))].sort();
 write("clubs.json", {
-  note: "公式データサイトの略称を半角化したもの。J1_2627 は 2026-27 シーズンの所属クラブ",
+  note: "公式データサイトの略称を半角化したもの。J1_2627 / J2_2627 は 2026-27 シーズンの所属クラブ",
   all: [...seen].sort(),
   J1_2627: j1_2627,
+  J2_2627: j2_2627,
 });
 
 console.log(`\nJ1 2015-2025: ${j1hist.length}試合 / 2026-27: ${j1next.length}試合`);
-console.log(`ルヴァン: ${ylc.length}試合 / J2: ${j2.length}試合`);
-console.log(`登場クラブ: ${seen.size}  2026-27 J1: ${j1_2627.length}クラブ`);
+console.log(`J2 2015-2026: ${j2.length}試合 / うち 2026-27: ${j2next.length}試合`);
+console.log(`ルヴァン: ${ylc.length}試合`);
+console.log(`登場クラブ: ${seen.size}  2026-27 J1: ${j1_2627.length}クラブ / J2: ${j2_2627.length}クラブ`);
