@@ -1,0 +1,13 @@
+{
+  "name": "jleague",
+  "version": "1.0.0",
+  "private": true,
+  "description": "J1 試合予想。tools/ai-yosou.js だけが依存パッケージを使う（それ以外は無依存）",
+  "type": "commonjs",
+  "scripts": {
+    "ai": "node tools/ai-yosou.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0"
+  }
+}

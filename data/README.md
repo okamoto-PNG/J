@@ -130,7 +130,7 @@ node tools/validate.js             # パラメータ選びが過剰適合して�
 | ファイル | 何をするか |
 |---|---|
 | `tools/fetch.js` | 取得だけ。解釈しない |
-| `tools/parse.js` | 生HTML → JSON。取得はしない |
+| `tools/parse.js` | 生HTML → JSON。取得はしない。`parseHtml()` を公開している（下記 ai-yosou.js が借りる） |
 | `tools/lib/data.js` | JSONの読み込みと日付の扱い |
 | `tools/lib/model.js` | **モデル本体**。バックテストもキャリブレーションもこれを呼ぶ |
 | `tools/backtest.js` | 日付順のバックテスト。`run()` を他から使える |
@@ -141,6 +141,8 @@ node tools/validate.js             # パラメータ選びが過剰適合して�
 | `tools/all.js` | 上のスクリプトを順番に全部実行する（公開版の作り直しも含む） |
 | `publish/build.js` | 本体＋アドオン → `publish/index.html`。**本体を引数に渡す** |
 | `tools/calibrate-*.js` | 各項目の実測。結果は `data/calib-*.json` に残す |
+| `tools/ai-yosou.js` | **別系統の実験。** 実行ごとに公式サイトから取得して Claude に予想させる → `AI予想.html`。統計モデルとは無関係で、**精度は未検証**。[AI予想.md](../AI予想.md) を読むこと |
+| `tools/verify-ai.js` | 上の集計部分の検算（164項目）。APIは呼ばない |
 
 ---
 

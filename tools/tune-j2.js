@@ -70,13 +70,42 @@ function newcomerAverage(rows) {
 }
 
 const NEW = newcomerAverage(j2all);
-const PRIOR = { atkH: NEW.atkH, defH: NEW.defH, atkA: NEW.atkA, defA: NEW.defA };
+const AVERAGE = { atkH: NEW.atkH, defH: NEW.defH, atkA: NEW.atkA, defA: NEW.defA };
 
 console.log("=== J2 の新顔クラブの平均像（J1 の昇格クラブ平均に相当）===");
 console.log(`  ${NEW.clubSeasons}クラブ・シーズン / ${NEW.appearances}試合から実測`);
-console.log(`  atkH ${PRIOR.atkH.toFixed(4)}  defH ${PRIOR.defH.toFixed(4)}` +
-            `  atkA ${PRIOR.atkA.toFixed(4)}  defA ${PRIOR.defA.toFixed(4)}`);
-console.log("  （1.0 がリーグ平均。攻撃は低いほど・守備は高いほど苦戦している）\n");
+console.log(`  atkH ${AVERAGE.atkH.toFixed(4)}  defH ${AVERAGE.defH.toFixed(4)}` +
+            `  atkA ${AVERAGE.atkA.toFixed(4)}  defA ${AVERAGE.defA.toFixed(4)}`);
+console.log("  （1.0 がリーグ平均。攻撃は低いほど・守備は高いほど苦戦している）");
+
+/* ============================================================================
+   1-b) J3 が手に入ったので、新顔を出自（J1から / J3から）で分けて個別に評価する
+   実測は tools/calibrate-j3.js が済ませ、確定値を data/calib-j3.json に書いている。
+   ここでは出自の判定や「J3での攻守力」を作り直さず、その結果を読むだけにする
+   （同じ計算を2箇所に置くと必ず片方が古くなる）。
+   ファイルが無い／実測して採用されなかった場合は、従来どおり混ぜた平均1組を使う。
+   ============================================================================ */
+let PRIOR = AVERAGE;
+let j3note = "J3 は使わない（data/calib-j3.json が無い）";
+try {
+  const cj3 = load("calib-j3.json");
+  if (cj3.adopted && cj3.adopted !== "single" && cj3.byClub && Object.keys(cj3.byClub).length) {
+    PRIOR = { byClub: cj3.byClub, default: AVERAGE };
+    j3note = `calib-j3.json の個別事前分布（${cj3.adopted} / b=${cj3.carryover} / ${cj3.view}）`;
+    console.log(`\n  → J3 から個別の事前分布を ${Object.keys(cj3.byClub).length}クラブぶん読み込んだ`);
+    console.log(`     ${j3note}`);
+    for (const [k, v] of Object.entries(cj3.groupAverages ?? {})) {
+      console.log(`     ${k.padEnd(4)}から: atkH ${v.atkH.toFixed(4)}  defH ${v.defH.toFixed(4)}` +
+        `  atkA ${v.atkA.toFixed(4)}  defA ${v.defA.toFixed(4)}  （${v.clubSeasons}クラブ）`);
+    }
+  } else {
+    j3note = "J3 を実測したが採用されなかった（混ぜた平均のまま）";
+    console.log(`\n  → ${j3note}`);
+  }
+} catch {
+  console.log(`\n  → ${j3note}`);
+}
+console.log();
 
 /* ============================================================================
    2) パラメータを決める（J1 と同じ規則）

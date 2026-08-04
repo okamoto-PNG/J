@@ -8,9 +8,14 @@
  *   j1-2026.json      2026-27 シーズンの全380試合（日程。結果は未実施）
  *   ylc-matches.json  ルヴァン杯 2015-2026（週中の日程負荷を実測するため）
  *   j2-matches.json   J2 2015-2025（昇格クラブを J2 成績から評価するため）
+ *   j3-matches.json   J3 2015-2026（J2 の新顔を J3 成績から評価するため）
  *   clubs.json        表記ゆれの対応表と J1 2026-27 の所属20クラブ
  *
  * 取得元のHTMLに手を入れないので、この変換は何度でもやり直せる。
+ *
+ * ai-yosou.js が「今この瞬間のHTML」を読むために parseHtml() を借りるので、
+ * 直接実行されたときだけ書き出すようにしてある（下の require.main 判定）。
+ * パーサはここ1箇所だけに置く。ふたつに分けると必ず片方が古くなる。
  */
 "use strict";
 
@@ -107,7 +112,12 @@ function tableRows(html) {
 /** 1ファイルを試合オブジェクトの配列にする */
 function parseFile(tag, year) {
   const file = path.join(RAW, `${tag}-${year}.html`);
-  const rows = tableRows(fs.readFileSync(file, "utf8"));
+  return parseHtml(fs.readFileSync(file, "utf8"));
+}
+
+/** 生HTML1ページを試合オブジェクトの配列にする（ファイル経由でも文字列でも同じ結果） */
+function parseHtml(html) {
+  const rows = tableRows(html);
   const out = [];
   for (const td of rows) {
     // [0]season [1]大会 [2]節 [3]試合日 [4]K/O [5]ホーム [6]スコア [7]アウェイ [8]会場 [9]観客
@@ -146,39 +156,56 @@ function write(name, obj) {
   console.log(`  ${name.padEnd(18)} ${String(n).padStart(5)}件  ${kb}KB`);
 }
 
-console.log("パース中…");
+function main() {
+  console.log("パース中…");
 
-/* J1：学習用（2015-2025）と予想対象（2026-27）を分ける */
-const j1all = years(2015, 2026).flatMap((y) => parseFile("j1", y));
-const j1hist = j1all.filter((m) => m.s <= 2025);
-const j1next = j1all.filter((m) => m.s === 2026);
+  /* J1：学習用（2015-2025）と予想対象（2026-27）を分ける */
+  const j1all = years(2015, 2026).flatMap((y) => parseFile("j1", y));
+  const j1hist = j1all.filter((m) => m.s <= 2025);
+  const j1next = j1all.filter((m) => m.s === 2026);
 
-/* ルヴァン杯・J2 */
-const ylc = years(2015, 2026).flatMap((y) => parseFile("ylc", y));
-const j2 = years(2015, 2026).flatMap((y) => parseFile("j2", y));
-/* J2 も J1 と同じく「学習用」と「予想対象」に分ける。
-   j2-matches.json は昇格クラブの評価に使われているので中身を変えない（2026も含んだまま）。
-   予想対象だけを別ファイルに出す。 */
-const j2next = j2.filter((m) => m.s === 2026);
+  /* ルヴァン杯・J2 */
+  const ylc = years(2015, 2026).flatMap((y) => parseFile("ylc", y));
+  const j2 = years(2015, 2026).flatMap((y) => parseFile("j2", y));
+  /* J2 も J1 と同じく「学習用」と「予想対象」に分ける。
+     j2-matches.json は昇格クラブの評価に使われているので中身を変えない（2026も含んだまま）。
+     予想対象だけを別ファイルに出す。 */
+  const j2next = j2.filter((m) => m.s === 2026);
 
-write("j1-matches.json", j1hist);
-write("j1-2026.json", j1next);
-write("ylc-matches.json", ylc);
-write("j2-matches.json", j2);
-write("j2-2026.json", j2next);
+  /* J3：J2 の新顔（J3から上がってきたクラブ）を J3 の成績から評価するため。
+     J2 と同じ形にそろえる（-matches は2026も含む・予想対象は別ファイル）。 */
+  const j3 = years(2015, 2026).flatMap((y) => parseFile("j3", y));
+  const j3next = j3.filter((m) => m.s === 2026);
 
-/* クラブ表記の一覧。将来 表記が変わったときに気づけるように残す */
-const seen = new Set([...j1all, ...ylc, ...j2].flatMap((m) => [m.h, m.a]));
-const j1_2627 = [...new Set(j1next.flatMap((m) => [m.h, m.a]))].sort();
-const j2_2627 = [...new Set(j2next.flatMap((m) => [m.h, m.a]))].sort();
-write("clubs.json", {
-  note: "公式データサイトの略称を半角化したもの。J1_2627 / J2_2627 は 2026-27 シーズンの所属クラブ",
-  all: [...seen].sort(),
-  J1_2627: j1_2627,
-  J2_2627: j2_2627,
-});
+  write("j1-matches.json", j1hist);
+  write("j1-2026.json", j1next);
+  write("ylc-matches.json", ylc);
+  write("j2-matches.json", j2);
+  write("j2-2026.json", j2next);
+  write("j3-matches.json", j3);
+  write("j3-2026.json", j3next);
 
-console.log(`\nJ1 2015-2025: ${j1hist.length}試合 / 2026-27: ${j1next.length}試合`);
-console.log(`J2 2015-2026: ${j2.length}試合 / うち 2026-27: ${j2next.length}試合`);
-console.log(`ルヴァン: ${ylc.length}試合`);
-console.log(`登場クラブ: ${seen.size}  2026-27 J1: ${j1_2627.length}クラブ / J2: ${j2_2627.length}クラブ`);
+  /* クラブ表記の一覧。将来 表記が変わったときに気づけるように残す */
+  const seen = new Set([...j1all, ...ylc, ...j2, ...j3].flatMap((m) => [m.h, m.a]));
+  const j1_2627 = [...new Set(j1next.flatMap((m) => [m.h, m.a]))].sort();
+  const j2_2627 = [...new Set(j2next.flatMap((m) => [m.h, m.a]))].sort();
+  const j3_2627 = [...new Set(j3next.flatMap((m) => [m.h, m.a]))].sort();
+  write("clubs.json", {
+    note: "公式データサイトの略称を半角化したもの。J1_2627 / J2_2627 / J3_2627 は 2026-27 シーズンの所属クラブ",
+    all: [...seen].sort(),
+    J1_2627: j1_2627,
+    J2_2627: j2_2627,
+    J3_2627: j3_2627,
+  });
+
+  console.log(`\nJ1 2015-2025: ${j1hist.length}試合 / 2026-27: ${j1next.length}試合`);
+  console.log(`J2 2015-2026: ${j2.length}試合 / うち 2026-27: ${j2next.length}試合`);
+  console.log(`J3 2015-2026: ${j3.length}試合 / うち 2026-27: ${j3next.length}試合`);
+  console.log(`ルヴァン: ${ylc.length}試合`);
+  console.log(`登場クラブ: ${seen.size}  2026-27 J1: ${j1_2627.length} / J2: ${j2_2627.length} / J3: ${j3_2627.length}クラブ`);
+}
+
+/* `node tools/parse.js` のときだけ書き出す。require されたときは何もしない */
+if (require.main === module) main();
+
+module.exports = { parseHtml, parseFile, club, toHalf };

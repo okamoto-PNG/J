@@ -24,6 +24,8 @@ const TARGETS = [
   ...range(2015, 2026).map((y) => ({ y, fid: 11, tag: "ylc" })),
   // J2：昇格クラブ（水戸・千葉）を J2 の成績から評価するため
   ...range(2015, 2026).map((y) => ({ y, fid: 2, tag: "j2" })),
+  // J3：J2 の新顔（J3から上がってきたクラブ）を J3 の成績から評価するため
+  ...range(2015, 2026).map((y) => ({ y, fid: 3, tag: "j3" })),
 ];
 
 function range(a, b) {
