@@ -994,6 +994,69 @@ if (!fs.existsSync(pubFile) || !fs.existsSync(addonFile)) {
     "KB ＋ アドオン " + (addon.length / 1024).toFixed(0) + "KB");
 }
 
+/* ═══════════════════════════════════════════ 7-b. 公開範囲ぜんたい */
+
+section("7-b. リポジトリで公開される範囲（git の追跡ファイル）");
+
+/**
+ * 7章は publish/index.html だけを見ている。
+ * だが GitHub に push した時点で、**追跡ファイルは全部が公開される**。
+ * 公開ページに個人情報が無くても、ソースやデータに混ざっていれば同じことなので、
+ * 範囲を「配るファイル1枚」から「リポジトリ全体」に広げる。
+ *
+ * ★ここで見るのは data/leak-words.txt の固有語（氏名・勤務先・ユーザー名）だけで、
+ *   leaks.js の汎用パターンは使わない。
+ *   汎用パターンは「生成物に絶対パスが混ざっていないか」を見るためのもので、
+ *   ソースや解説文にはそれ自体を説明した記述が正当に出てくる。
+ *   実際 OneDrive は罠の説明文に7件、C:\ は取得した生HTMLに含まれる
+ *   New Relic の正規表現 `code:\d+` に52件反応する。どちらも実害が無い。
+ *   全部を不合格にすると「いつも赤い検算」になり、本当の検出が埋もれる。
+ *
+ * 固有語は .gitignore してあるので CI には無い。そのときは実施しないと明示する
+ * （「無ければ不合格」にすると CI が必ず落ちる。7章で一度踏んでいる）。
+ */
+let tracked = null;
+try {
+  tracked = require("child_process")
+    .execFileSync("git", ["-c", "core.quotepath=false", "ls-files", "-z"],
+      { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "ignore"] })
+    .split("\0").filter(Boolean);
+} catch { /* git が無い・リポジトリでない */ }
+
+if (!tracked) {
+  console.log("     ℹ git の追跡ファイルが読めないので実施しません（リポジトリの外で動かした？）");
+} else {
+  check("追跡ファイルの一覧が取れる", tracked.length > 0, `${tracked.length}件`);
+
+  /* ★これが最重要。leak-words.txt は「検出語そのもの」なので、
+     追跡された時点で、漏洩を防ぐ仕掛けが漏洩源になる。 */
+  check("data/leak-words.txt が追跡されていない（検出語ごと公開されない）",
+    !tracked.includes("data/leak-words.txt"));
+
+  /* publish/ は生成物。追跡すると CI の作り直しと衝突する（解説.md の設計） */
+  check("publish/ が追跡されていない（生成物を持ち込まない）",
+    !tracked.some((f) => f.startsWith("publish/")));
+
+  /* 実行記録は環境ごとに違う。手元の絶対パスが載ることがある */
+  check("data/auto-log.txt が追跡されていない",
+    !tracked.includes("data/auto-log.txt"));
+
+  const leakLib2 = require("./lib/leaks");
+  const localPats = leakLib2.patterns().slice(leakLib2.GENERIC.length);
+  if (localPats.length === 0) {
+    console.log("     ℹ data/leak-words.txt が無いので固有語の検査は実施しません" +
+      "（CI では常にこうなる。手元で氏名などを足すと本当の検査になります）");
+  } else {
+    /* 見つけても語そのものは出さない。出した時点で検算のログが漏洩源になる */
+    const hits = tracked.filter((f) => {
+      const p = path.join(ROOT, f);
+      return fs.existsSync(p) && localPats.some((re) => re.test(fs.readFileSync(p, "utf8")));
+    });
+    check(`追跡ファイル ${tracked.length} 件に固有語が入っていない`, hits.length === 0,
+      hits.length ? `該当: ${hits.join(" , ")}（語は伏せています）` : "");
+  }
+}
+
 /* ═══════════════════════════════════════════════════ 結果 */
 
 console.log(`\n${"═".repeat(64)}`);
