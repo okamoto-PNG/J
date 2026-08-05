@@ -40,7 +40,8 @@ const APP = buildAppearances([
 ]);
 
 const SEASONS = [...new Set(j1.map((m) => m.s))].sort();
-const FIRST_EVAL = 2018; // 解説.md 6章と同じ評価区間にする
+/* 解説.md 6章と同じ評価区間。data/season.json より（直書きしない） */
+const FIRST_EVAL = require("./lib/season").require().firstEval;
 
 /* ---------------------------------------------------------------- 観測を作る */
 

@@ -142,6 +142,23 @@
         background:var(--line);color:var(--muted);margin-left:5px}
   .up{color:var(--good)} .down{color:var(--away)}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  /* 予想の入力と、他の人の予想の一覧 */
+  .pickrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;
+           padding-top:9px;border-top:1px dashed var(--line)}
+  .plab{font-size:.72rem;font-weight:700;color:var(--muted);min-width:5.2em}
+  .peers{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+  .peer{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;
+        border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--panel)}
+  .peer b{font-weight:700}
+  .ok{color:var(--good);font-weight:800}
+  .ng{color:var(--away);font-weight:800}
+  .hint{font-size:.72rem;color:var(--muted)}
+  /* 封印（締切をチャットに証明してもらう） */
+  .sealbox{border:1px solid var(--line);border-radius:9px;background:var(--panel2);
+           padding:10px 12px;margin:10px 0 14px}
+  .sealbox .ok{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1rem;
+               letter-spacing:.06em}
+  .codecell{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
   textarea{width:100%;min-height:90px;font-size:.72rem;
            font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
   .how summary{font-size:.82rem;color:var(--accent);cursor:pointer;padding:4px 0;font-weight:600}
@@ -232,6 +249,59 @@
   </section>
 
   <section>
+    <h2>的中率 <span class="tag">あなた・他の人・モデルを同じ条件で採点</span></h2>
+    <div class="scroll" id="scoreout"></div>
+    <div id="scoredetail"></div>
+    <div class="note">
+      採点するのは<b>結果を入れた試合のうち、その人が予想を出しているもの</b>だけです。
+      出していない試合を「はずれ」にすると、予想を出さない人が有利になってしまいます。<br>
+      <b>締切（キックオフ）を過ぎてから入れた予想は採点しません。</b>
+      試合を見てから入力すれば的中率100%になってしまい、数字の意味が無くなるためです。
+      「締切後」の列に除外した件数が出ます。<br>
+      <b>モデルの採点はその節より前の結果だけで学習し直して行います。</b>
+      あとから入れた結果でモデルを作ると「未来を見て予想した」ことになり、精度が実際より良く出ます。
+    </div>
+  </section>
+
+  <section>
+    <h2>予想を共有する <span class="tag">サーバー不要。リンクかJSONを送るだけ</span></h2>
+    <div class="addrow">
+      <input type="text" id="myname" placeholder="あなたの名前（共有相手の画面に出ます）" maxlength="24">
+      <button id="shareLink">共有リンクを作る</button>
+      <button id="shareJson">予想をコピー用に出す</button>
+    </div>
+    <textarea id="shareio" placeholder="ここに出た文字列やリンクを相手に送ってください。受け取った側は、それをここに貼って「読み込む」。" style="margin-top:4px"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="shareImp">受け取った予想を読み込む</button>
+    </div>
+    <div id="peerList" style="margin-top:12px"></div>
+
+    <h2 style="margin-top:20px">封印コードの照合 <span class="tag">チャットの投稿時刻を締切の証拠にする</span></h2>
+    <div class="addrow">
+      <input type="text" id="codeIn" placeholder="チャットに貼られた封印コード（例 a3f9-21c8-7d04）" maxlength="32">
+      <button id="codeChk">照合する</button>
+    </div>
+    <div id="codeOut" class="hint"></div>
+    <div id="sealTable" style="margin-top:12px"></div>
+    <div class="note">
+      <b>使い方。</b>キックオフ前に各自が節ビューで「封印する」を押し、出たコードをグループに貼ります。
+      試合後に予想を共有し、貼られたコードをここで照合します。
+      <b>一致すれば「その予想は封印した時点で確定していた」ことになります。</b>
+      コードはハッシュなので、貼った時点で中身は分かりません。<br>
+      <b>時刻の根拠はチャットの投稿時刻です。</b> このアプリは時刻を証明しません。
+      端末の時計を戻せば「締切前」として記録できてしまうので、
+      <b>チャットに貼った時刻だけが信用できる証拠</b>になります。
+    </div>
+
+    <div class="note">
+      共有されるのは<b>あなたの予想と名前だけ</b>です。試合結果・離脱者の設定は入りません。
+      相手の入力を上書きすることもありません。<br>
+      <b>リンクを開いた人の画面に、あなたの予想が自動で取り込まれます。</b>
+      同じ名前で送り直せば、その人の画面のあなたの予想が新しいものに置き換わります。
+    </div>
+  </section>
+
+  <section>
     <h2>データ <span class="tag">この端末のブラウザに自動保存されます</span></h2>
     <div class="row">
       <button id="exp">書き出し（JSON）</button>
@@ -242,6 +312,7 @@
     <div class="note">
       保存先は<b>この端末のこのブラウザだけ</b>です。パソコンとスマホで同じ状態にしたいときは、
       片方で「書き出し」→ JSONをコピー → もう片方で貼って「読み込み」してください。
+      こちらは<b>結果も離脱者も含めた丸ごとの引っ越し用</b>です（共有には上の欄を使ってください）。
     </div>
   </section>
 
@@ -266,12 +337,12 @@
         という総当たりの制約で検算済みです。</p>
 
       <h3>節が進むとどう変わるか</h3>
-      <p>今季の試合は、過去シーズンの<b>J1で1.2倍・J2で1.8倍</b>の重みで
+      <p>今季の試合は、過去シーズンの<b>J1で1.2倍・J2で2.2倍</b>の重みで
         戦力の推定に混ざります。この値は勘ではなく、2018-2025を試合日順にバックテストし、
-        <b>学習区間(2018-22)と検証区間(2023-25)の両方で改善したときだけ採用する</b>という規則で決めました。</p>
+        <b>学習区間(2018-2022)と検証区間(2023-2025)の両方で改善したときだけ採用する</b>という規則で決めました。</p>
       <ul>
-        <li>J2 のほうが今季を重く見ます（1.8 対 1.2）。
-          記憶の長さも J2 は短め（HALF_LIFE 5 対 6）で、
+        <li>J2 のほうが今季を重く見ます（2.2 対 1.2）。
+          記憶の長さも J2 は短め（HALF_LIFE 6 対 6）で、
           <b>J2 は入れ替わりが激しいぶん、古い成績があてにならない</b>ということです</li>
         <li>対戦相性（H2H）は<b>実測すると有害</b>でした。効き幅をほぼ無効（H2H_K=80）にしています</li>
         <li>中N日などの日程補正も<b>効果を検出できず</b>、既定では何も効きません</li>
@@ -282,7 +353,7 @@
       <ul>
         <li><b>J1</b>：的中率 <b>45.8%</b>／log loss <b>1.0548</b>
           （常にホーム勝ちなら 41.2%／1.0799）　2670試合</li>
-        <li><b>J2</b>：的中率 <b>43.8%</b>／log loss <b>1.0632</b>
+        <li><b>J2</b>：的中率 <b>44.3%</b>／log loss <b>1.0613</b>
           （同 38.7%／1.0897）　3532試合</li>
       </ul>
       <p>正直に言うと<b>この程度です</b>。一様に1/3ずつと答えると log loss は 1.0986 なので、
@@ -1314,7 +1385,7 @@ const HIST = {
 };
 
 const SEASON = 2026;
-const WEEKS = 38, PER_WEEK = 10;   // TEAMS も J2 も 20クラブ・38節・1節10試合
+const WEEKS = 38, PER_WEEK = 10;   // data/season.json より（20クラブ・38節・1節10試合）
 
 /* TEAMS クラブの正式名。J2 は公式データサイトが略称しか持たないので略称のまま出す */
 const FULLNAMES = {
@@ -1334,7 +1405,15 @@ const FULLNAMES = {
    ここから下のコードは「今どのリーグを見ているか」を気にせず、
    これらの変数を読むだけでよい。 */
 let LG = "J1";                 // 表示中のリーグ
-let CLUBS, MATCHES, HAS_HISTORY, TEAMS, FULL, FIXTURES, ROUND_DATES, P, PROMOTED;
+let CLUBS, MATCHES, HAS_HISTORY, TEAMS, FULL, FIXTURES, ROUND_DATES, P, PROMOTED, PROMOTED_BY;
+
+/**
+ * 履歴の無いクラブを寄せる先。クラブ個別の値があればそれを使う。
+ * J2 の新顔は「J1から落ちてきた」と「J3から上がってきた」で強さが全然違うので、
+ * tools/calibrate-j3.js が出自と J3 での成績から個別に決めている（data/calib-j3.json）。
+ * 個別の値が無いクラブは、混ぜた平均像 PROMOTED に寄せる。
+ */
+const priorOf = (club) => PROMOTED_BY[club] ?? PROMOTED;
 
 /** リーグを切り替える。STATE.fit の作り直しは呼び出し側で行う */
 function useLeague(key) {
@@ -1352,6 +1431,7 @@ function useLeague(key) {
   ROUND_DATES = L.roundDates;
   P = L.P;
   PROMOTED = L.promoted;
+  PROMOTED_BY = L.promotedByClub ?? {};
   FIXTURES = Array.from({ length: WEEKS }, (_, w) =>
     Array.from({ length: PER_WEEK }, (_, i) => ({
       h: TEAMS[AB.indexOf(L.fixturesRaw[w * 20 + i * 2])],
@@ -1381,6 +1461,26 @@ const LEAGUES = {
       "CH1E90F3542JGA678DIBJ7C6DG4EAF19B2058IH3DHF17BE05A382CG964IJC5D34G129I70BE6F8AHJ" +
       "AJ1G96B4352E0D8CH7IFJ1CBD24AF078EI59G36H",
     roundDates: ["2026-08-07", "2026-08-14", "2026-08-21", "2026-08-29", "2026-09-02", "2026-09-05", "2026-09-12", "2026-09-19", "2026-10-09", "2026-10-17", "2026-10-21", "2026-10-24", "2026-10-31", "2026-11-07", "2026-11-20", "2026-11-25", "2026-11-28", "2026-12-04", "2026-12-12", "2026-12-19", "2027-02-13", "2027-02-20", "2027-02-27", "2027-03-06", "2027-03-10", "2027-03-13", "2027-03-20", "2027-04-03", "2027-04-09", "2027-04-16", "2027-04-24", "2027-04-29", "2027-05-03", "2027-05-09", "2027-05-15", "2027-05-22", "2027-05-29", "2027-06-06"],
+    kickoffs:
+      "006h006i016c016c016c016c016c016f0260026c076c086008600866086b086c086c086c086c086c" +
+      "0e6c0e6i0f600f660f6c0f6c0f6c0f6f0f6i0g6i0m600m600m660m660m6c0m6c0m6c0m6c0m6c0m6c" +
+      "0q6c0q6c0q6c0q6c0q6c0q6c0q6c0q6c0q6c0q6c0t6c0u600u600u600u600u6c0u6c0u6c0u6c0u6i" +
+      "10601066106c106c106c106c10..10..116011661760176617661766176c176c176i17..185o185o" +
+      "1r6c1s4o1s501s501s..1s..1t4o1t501t501t5c1z4o1z4o1z4o1z4o1z501z501z5c1z..1z..1z.." +
+      "236c236c236c236c236c236c236c236c236c236i264o26502650265c26..274o27502750275c275c" +
+      "2d4o2d4o2d4o2d502d..2d..2d..2e4c2e4o2e4o2k4c2k4o2k4o2k502k502k..2l4o2l4o2l502l5o" +
+      "2x6c2y4o2y4o2y4o2y502y502y5c2y..2y..2y..326c326c326c326c326c326c326i3n6c3n6c3n.." +
+      "354o354o3550355035..35..35..364o364o36503b663c4c3c4o3c4o3c503c503c..3d4o3d4o3d50" +
+      "3j4o3j4o3j5c3k4c3k4o3k4o3k4o3k503k503k503q4c3q4o3q4o3q4u3q4u3q503q503q5c3q5c...." +
+      "5a..5a..5a..5a..5a..5a..5a..5a..5a..5b..5h..5h..5h..5h..5h..5h..5h..5h..5h..5h.." +
+      "5o..5o..5o..5o..5o..5o..5o..5o..5o..5o..5v..5v..5v..5v..5v..5v..5v..5v..5v..5v.." +
+      "5z..5z..5z..5z..5z..5z..5z..5z..5z..5z..62..62..62..62..62..62..62..62..62..63.." +
+      "69..69..69..69..69..69..69..69..69..6a..6n..6n..6n..6n..6n..6n..6n..6n..6n..6n.." +
+      "6t..6u..6u..6u..6u..6u..6u..6u..6u..6u..70..71..71..71..71..71..71..71..71..71.." +
+      "78..78..78..78..78..78..78..78..78..78..7d..7d..7d..7d..7d..7d..7d..7d..7d..7d.." +
+      "7h..7h..7h..7h..7h..7h..7h..7h..7h..7h..7n..7n..7n..7n..7n..7n..7n..7n..7n..7n.." +
+      "7t..7t..7t..7t..7t..7t..7t..7t..7t..7t..80..80..80..80..80..80..80..80..80..80.." +
+      "87..87..87..87..87..87..87..87..87..87..8f..8f..8f..8f..8f..8f..8f..8f..8f..8f..",
     P: { HALF_LIFE: 6, SHRINK: 28, RHO: 0, H2H_K: 80, H2H_CAP: 0.25, CUR_W: 1.2 },
     promoted: { atkH:0.8820, defH:1.1013, atkA:0.8495, defA:1.0389 },
   },
@@ -1399,8 +1499,33 @@ const LEAGUES = {
       "B1278ICEDFA5G0J94H63B6H30J5CE4F1AD78G29I3G2A8ECFD0IB19JH4567BG8H035JDCE6A47F921I" +
       "B239HC05FI7AG8JE4D612JHB85C4D7EGA3I69F10",
     roundDates: ["2026-08-08", "2026-08-15", "2026-08-22", "2026-08-29", "2026-09-05", "2026-09-12", "2026-09-18", "2026-09-26", "2026-10-03", "2026-10-10", "2026-10-17", "2026-10-21", "2026-10-24", "2026-10-31", "2026-11-03", "2026-11-07", "2026-11-14", "2026-11-21", "2026-11-25", "2026-11-28", "2026-12-05", "2026-12-12", "2027-02-20", "2027-02-27", "2027-03-06", "2027-03-13", "2027-03-17", "2027-03-20", "2027-03-27", "2027-04-03", "2027-04-10", "2027-04-17", "2027-04-24", "2027-04-29", "2027-05-03", "2027-05-09", "2027-05-15", "2027-05-23"],
-    P: { HALF_LIFE: 5, SHRINK: 18, RHO: 0, H2H_K: 80, H2H_CAP: 0.25, CUR_W: 1.8 },
+    kickoffs:
+      "014x01660166016c016c016c016c016i0260026c086008600866086c086c086c086c086c0960096c" +
+      "0f500f5o0f600f660f6c0f6c0f6c0f6c0f6c0f6c0m600m600m660m660m6c0m6c0m6c0m6c0m6c0m6c" +
+      "0t660t6c0t6c0t6c0t6c0u4c0u600u600u6c0u6c1060106010661066106c106c106c106c11601160" +
+      "164c174o1766176c176c176c176c176c176c185o1e5o1e5o1e5o1e5o1e5o1e5o1e5o1e5o1e5o1e5o" +
+      "1l4o1l4o1l5c1l5o1l5o1m4c1m4c1m4o1m501m6c1s4o1s4o1s4o1s4o1s5c1s601t4c1t4o1t501t60" +
+      "1z4o1z4o1z4o1z4o1z4o1z4o1z4o1z601z6c204c234c236c236c236c236c236c236c236c236c236c" +
+      "264o264o274o274o274o274o274o274o275027602d4c2d4o2d4o2d4o2d4o2d4o2d4o2d4o2d4o2d4p" +
+      "2g4n2g4o2g4o2g4o2g4o2g4o2g4o2g4o2g4o2g4y2k4o2k4o2k4o2k4o2k4o2k4o2l4c2l4o2l4o2l50" +
+      "2r4o2r4o2r4o2r4o2r4o2s4c2s4c2s4c2s4o2s4o2y4o2y4o2y4o2y4o2y4o2y4o2y4o2y4o2y4o2z4o" +
+      "32663266326c326c326c326c326c326c326c326c354o364c364o364o364o364o364o364o364o3650" +
+      "3c4o3c4o3c4o3c4o3c4o3c4o3d4c3d4o3d4o3d503j4i3j4l3j4o3j4o3j4o3j4o3j503k4c3k4o3k4o" +
+      "5h..5h..5h..5h..5h..5h..5h..5h..5h..5h..5o..5o..5o..5o..5o..5o..5o..5o..5o..5o.." +
+      "5v..5v..5v..5v..5v..5v..5v..5v..5v..5v..62..62..62..62..62..62..62..62..62..62.." +
+      "66..66..66..66..66..66..66..66..66..66..69..69..69..69..69..69..69..69..69..69.." +
+      "6g..6g..6g..6g..6g..6g..6g..6g..6g..6g..6n..6n..6n..6n..6n..6n..6n..6n..6n..6n.." +
+      "6u..6u..6u..6u..6u..6u..6u..6u..6u..6u..71..71..71..71..71..71..71..71..71..71.." +
+      "78..78..78..78..78..78..78..78..78..78..7d..7d..7d..7d..7d..7d..7d..7d..7d..7d.." +
+      "7h..7h..7h..7h..7h..7h..7h..7h..7h..7h..7n..7n..7n..7n..7n..7n..7n..7n..7n..7n.." +
+      "7t..7t..7t..7t..7t..7t..7t..7t..7t..7t..81..81..81..81..81..81..81..81..81..81..",
+    P: { HALF_LIFE: 6, SHRINK: 28, RHO: -0.02, H2H_K: 80, H2H_CAP: 0.25, CUR_W: 2.2 },
     promoted: { atkH:1.0238, defH:1.0684, atkA:1.0787, defA:1.0410 },
+    promotedByClub: {
+      "八戸": { atkH:0.8277, defH:1.1967, atkA:0.8745, defA:1.1495 },
+      "宮崎": { atkH:0.8548, defH:1.2780, atkA:0.9378, defA:1.1481 },
+      "栃木C": { atkH:0.9276, defH:1.1662, atkA:1.0467, defA:1.1465 },
+    },
   },
 };
 
@@ -1447,7 +1572,7 @@ function fitRatings(cur) {
 
   const R = {}, K = P.SHRINK;
   for (const [k, v] of Object.entries(T)) {
-    const pr = HAS_HISTORY.has(k) ? { atkH:1, defH:1, atkA:1, defA:1 } : PROMOTED;
+    const pr = HAS_HISTORY.has(k) ? { atkH:1, defH:1, atkA:1, defA:1 } : priorOf(k);
     R[k] = {
       atkH: ((v.hGF + K * lgH * pr.atkH) / (v.hN + K)) / lgH,
       defH: ((v.hGA + K * lgA * pr.defH) / (v.hN + K)) / lgA,
@@ -1459,7 +1584,7 @@ function fitRatings(cur) {
   for (const m of cur) { R[m.h].nCur++; R[m.a].nCur++; }
   return { R, lgH, lgA, cur };
 }
-const ratingOf = (fit, t) => fit.R[t] ?? { ...PROMOTED, nCur: 0, promoted: true };
+const ratingOf = (fit, t) => fit.R[t] ?? { ...priorOf(t), nCur: 0, promoted: true };
 
 /** 過去の直接対決から「相性」を補正する（今季の対戦も含む） */
 function h2hFactor(fit, home, away) {
@@ -1549,17 +1674,32 @@ const KEY = "jleague-2627-weekly";
 /* リーグごとに別々の入力を持つ。STORE が保存される中身で、
    STATE は「いま表示しているリーグ」の作業用。中身は同じオブジェクトを指すので、
    STATE.results を書き換えれば STORE 側にも反映される。 */
-const blank = () => ({ results: {}, cond: {}, week: 1 });
+const blank = () => ({ results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {} });
 const STORE = { J1: blank(), J2: blank() };
-const STATE = { results: {}, cond: {}, week: 1, fit: null, sim: null };
+const STATE = { results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {}, fit: null, sim: null };
+
+/* 自分の名前と、読み込んだ他の人の予想。
+   results（実際の結果）とは別物なので混ぜないこと。
+     STATE.picks … 自分の予想スコア   { "節.試合": [ホーム, アウェイ] }
+     PEERS[LG]   … 他の人の予想       { 名前: { "節.試合": [ホーム, アウェイ] } }
+   結果は「事実」なので1つ、予想は「人ごと」に何組でもある。 */
+let ME = { name: "", salt: "" };
+const PEERS = { J1: {}, J2: {} };
 
 /** STATE を、いま選んでいるリーグの保存領域に繋ぎ直す */
 function bindLeague() {
   const st = (STORE[LG] ??= blank());
+  st.picks ??= {};                              // 旧バージョンから来たときの保険
+  st.pickAt ??= {};
+  st.sealed ??= {};
   STATE.results = st.results;
   STATE.cond = st.cond;
+  STATE.picks = st.picks;
+  STATE.pickAt = st.pickAt;
+  STATE.sealed = st.sealed;
   STATE.week = st.week;
   STATE.sim = null;
+  PEERS[LG] ??= {};
 }
 
 const curMatches = () => Object.entries(STATE.results).map(([k, v]) => {
@@ -1573,22 +1713,528 @@ function refit() { STATE.fit = fitRatings(curMatches()); STATE.sim = null; }
 function save() {
   try {
     STORE[LG].week = STATE.week;                 // week だけは数値なので書き戻す
-    localStorage.setItem(KEY, JSON.stringify({ v: 2, lg: LG, store: STORE }));
+    localStorage.setItem(KEY, JSON.stringify({ v: 4, lg: LG, store: STORE, me: ME, peers: PEERS }));
   } catch (e) { /* プライベートモード等では保存できないが、動作自体は続く */ }
 }
 const OLD_KEY = "j1-2627-weekly";   // J1 だけだった頃の保存先
 function load() {
   try {
     const j = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    if (j && j.v === 2 && j.store) {
+    // v2（予想も共有も無かった頃）・v3（封印が無かった頃）も読める。blank() が足りない分を補う
+    if (j && j.v >= 2 && j.v <= 4 && j.store) {
       for (const k of ["J1", "J2"]) if (j.store[k]) STORE[k] = { ...blank(), ...j.store[k] };
       if (LEAGUES[j.lg]) LG = j.lg;
+      if (j.v >= 3) {
+        if (j.me && typeof j.me.name === "string") {
+          ME = { name: j.me.name, salt: typeof j.me.salt === "string" ? j.me.salt : "" };
+        }
+        for (const k of ["J1", "J2"]) if (j.peers?.[k]) PEERS[k] = j.peers[k];
+      }
       return;
     }
     // 以前の版で入力した内容があれば引き継ぐ
     const old = JSON.parse(localStorage.getItem(OLD_KEY) ?? "null");
-    if (old) STORE.J1 = { results: old.results ?? {}, cond: old.cond ?? {}, week: old.week ?? 1 };
+    if (old) STORE.J1 = { ...blank(), results: old.results ?? {}, cond: old.cond ?? {}, week: old.week ?? 1 };
   } catch (e) { /* 壊れていたら初期状態のまま */ }
+}
+
+/* ==========================================================================
+   3-b) 予想の採点
+
+   「当たったか」を測るには、予想した時点の情報だけで予想していなければならない。
+   このアプリは結果を後からいくらでも入れられるので、いま STATE.fit で採点すると
+   「第3節の予想」を第20節までの結果で作ったモデルで採点することになり、
+   精度が過大に出る。解説.md 6章と同じで、そこだけは崩してはいけない。
+   だから採点のときは節ごとに「その節より前の結果だけ」で学習し直す。
+   ========================================================================== */
+
+/** スコアから勝分敗へ */
+const outcomeOf = (hg, ag) => (hg > ag ? "h" : hg === ag ? "d" : "a");
+const OUT_LABEL = { h: "ホーム勝ち", d: "引き分け", a: "アウェイ勝ち" };
+
+/* -------------------------------------------------------------- 予想の締切
+
+   締切は「その試合のキックオフ」。節単位ではないのは、1節が金〜日の2〜3日に
+   分散するため（節でまとめて締めると日曜の試合を予想できなくなる）。
+
+   KICKOFFS は1試合4文字。日付（2026-01-01からの日数・36進数2桁）＋ K/O（5分単位・36進数2桁）。
+   Ｊリーグは K/O 時刻を数週間前に発表するので、取得時点では半分以上が未定。
+   時刻が未定なら「当日0時」を締切にする。勝手に時刻を決めるとデータの捏造になるので、
+   分かっていない分は安全側（早い側）に倒す。日付ごと未定なら締切なし。
+
+   時刻はすべて日本時間として扱う。端末のタイムゾーンが違っても同じ締切になる。
+   ただし端末の時計そのものは変えられるので、これは「証明」ではない（30-6章）。 */
+const KO_EPOCH = Date.UTC(2026, 7, 7);   // 2026-08-07（最も早い試合日）
+const JST_OFFSET = 9 * 3600 * 1000;
+
+/** その試合の締切（epoch ms）。日程未発表なら null */
+function deadlineOf(w, i) {
+  const s = LEAGUES[LG]?.kickoffs;
+  if (!s) return null;
+  const at = ((w - 1) * PER_WEEK + i) * 4;
+  const d = s.slice(at, at + 2), t = s.slice(at + 2, at + 4);
+  if (d === ".." || d.length < 2) return null;
+  const days = parseInt(d, 36);
+  if (Number.isNaN(days)) return null;
+  const min = t === ".." ? 0 : parseInt(t, 36) * 5;
+  return KO_EPOCH + days * 86400000 + (Number.isNaN(min) ? 0 : min) * 60000 - JST_OFFSET;
+}
+/** 時刻が発表されているか（されていなければ当日0時締切） */
+function koKnown(w, i) {
+  const s = LEAGUES[LG]?.kickoffs;
+  if (!s) return false;
+  const at = ((w - 1) * PER_WEEK + i) * 4;
+  return s.slice(at, at + 2) !== ".." && s.slice(at + 2, at + 4) !== "..";
+}
+const now = () => Date.now();
+/** 締切を過ぎたか。締切が無い試合は締まらない */
+function isClosed(w, i) {
+  const dl = deadlineOf(w, i);
+  return dl != null && now() >= dl;
+}
+/** 締切の表示用文字（日本時間） */
+function deadlineLabel(w, i) {
+  const dl = deadlineOf(w, i);
+  if (dl == null) return "日程未定（締切なし）";
+  const j = new Date(dl + JST_OFFSET);
+  const md = `${j.getUTCMonth() + 1}/${j.getUTCDate()}`;
+  return koKnown(w, i)
+    ? `${md} ${String(j.getUTCHours()).padStart(2, "0")}:${String(j.getUTCMinutes()).padStart(2, "0")} 締切`
+    : `${md} 0:00 締切（K/O時刻が未発表のため）`;
+}
+
+/**
+ * その予想が締切前に入れられたか。
+ *   "o" 締切前   "x" 締切後   "?" 不明（この機能より前に入れた予想）
+ * 締切が無い試合は締切後になり得ないので "o"。
+ */
+function onTime(key, at) {
+  const [w, i] = key.split(".").map(Number);
+  const dl = deadlineOf(w, i);
+  if (dl == null) return "o";
+  if (at == null) return "?";
+  return at < dl ? "o" : "x";
+}
+
+/** 「第w節より前」の結果だけで学習した fit */
+function fitBefore(w) {
+  const cur = [];
+  for (const [k, v] of Object.entries(STATE.results)) {
+    const [ww, i] = k.split(".").map(Number);
+    if (ww >= w) continue;
+    const f = FIXTURES[ww - 1]?.[i];
+    if (f) cur.push({ s: SEASON, h: f.h, a: f.a, hg: v[0], ag: v[1] });
+  }
+  return fitRatings(cur);
+}
+
+/** そのリーグの過去成績から出す「常にこの割合と答える」基準率 */
+function baseRates() {
+  let h = 0, d = 0, a = 0;
+  for (const m of MATCHES) {
+    if (m.hg > m.ag) h++; else if (m.hg === m.ag) d++; else a++;
+  }
+  const n = h + d + a || 1;
+  return { h: h / n, d: d / n, a: a / n };
+}
+
+/** 採点の入れ物。late は締切後に入れた予想の件数（本編の的中率には入れない） */
+const newTally = (name, kind) => ({
+  name, kind, n: 0, hit: 0, brier: 0, exact: 0, ll: 0, hasLL: kind !== "pick",
+  late: 0, unknown: 0,
+});
+
+/**
+ * 確率の組（{h,d,a}）を実際の結果で採点して tally に足す。
+ * Brier は「外したときの罰」が有限なので、言い切りの予想（0/1）でも使える。
+ * log loss は 0 と答えて外すと無限大になるため、確率を出すモデルにだけ使う。
+ */
+function addScore(t, p, act) {
+  t.n++;
+  const top = p.h >= p.d && p.h >= p.a ? "h" : p.d >= p.a ? "d" : "a";
+  if (top === act) t.hit++;
+  for (const k of ["h", "d", "a"]) t.brier += (p[k] - (k === act ? 1 : 0)) ** 2;
+  if (t.hasLL) t.ll += -Math.log(Math.max(p[act], 1e-12));
+}
+
+/** 言い切りの予想を確率の組にする */
+const oneHot = (o) => ({ h: o === "h" ? 1 : 0, d: o === "d" ? 1 : 0, a: o === "a" ? 1 : 0 });
+
+/**
+ * あなた・他の人・モデル・基準率をまとめて採点する。
+ * 採点対象は「結果が入っていて、かつその人が予想を出している試合」だけ。
+ * 予想していない試合を外し扱いにすると、出さない人が有利になってしまう。
+ */
+function scoreboard() {
+  const rate = baseRates();
+  /* flags は「その予想が締切前だったか」。自分は記録した時刻から出し、
+     他の人は共有文字列に入っていたものを使う（自己申告。身内前提・30-6章）。 */
+  const myFlags = {};
+  for (const k of Object.keys(STATE.picks)) myFlags[k] = onTime(k, STATE.pickAt[k]);
+  const people = [{
+    key: "__me__", name: ME.name.trim() || "あなた",
+    picks: STATE.picks, flags: myFlags, kind: "pick",
+  }];
+  for (const [name, rec] of Object.entries(PEERS[LG] ?? {})) {
+    /* 旧形式（予想だけ）と新形式（{picks, flags}）の両方を受ける */
+    const picks = rec.picks ?? rec;
+    people.push({ key: name, name, picks, flags: rec.flags ?? {}, kind: "pick" });
+  }
+  const tally = new Map(people.map((p) => [p.key, newTally(p.name, "pick")]));
+  const model = newTally("モデル（このアプリ）", "model");
+  const base = newTally("基準率（毎回同じ確率）", "model");
+
+  /* 結果が入っている試合を節ごとにまとめる */
+  const byWeek = new Map();
+  for (const k of Object.keys(STATE.results)) {
+    const w = Number(k.split(".")[0]);
+    (byWeek.get(w) ?? byWeek.set(w, []).get(w)).push(k);
+  }
+
+  const perMatch = [];
+  const savedFit = STATE.fit;
+  try {
+    for (const w of [...byWeek.keys()].sort((x, y) => x - y)) {
+      STATE.fit = fitBefore(w);                       // ★ この節より前だけで学習
+      for (const k of byWeek.get(w).sort()) {
+        const i = Number(k.split(".")[1]);
+        const f = FIXTURES[w - 1]?.[i];
+        const r = STATE.results[k];
+        if (!f || !r) continue;
+        const act = outcomeOf(r[0], r[1]);
+        /* 離脱者補正は「いまの状況」なので過去の採点には使わない（15章と同じ理由）*/
+        const p = predict(f.h, f.a, false);
+        const mp = { h: p.hw, d: p.dr, a: p.aw };
+        addScore(model, mp, act);
+        if (p.scores?.[0] && p.scores[0].i === r[0] && p.scores[0].j === r[1]) model.exact++;
+        addScore(base, rate, act);
+
+        const row = { key: k, w, i, h: f.h, a: f.a, r, act, model: mp, picks: {}, flags: {} };
+        for (const person of people) {
+          const q = person.picks[k];
+          if (!q) continue;
+          const t = tally.get(person.key);
+          const flag = person.flags[k] ?? "?";
+          row.picks[person.key] = q;
+          row.flags[person.key] = flag;
+          /* 締切後に入れた予想は的中率に入れない。入れてしまうと
+             「試合を見てから入力すれば100%」になり、数字が意味を失う。 */
+          if (flag === "x") { t.late++; continue; }
+          if (flag === "?") t.unknown++;
+          addScore(t, oneHot(outcomeOf(q[0], q[1])), act);
+          if (q[0] === r[0] && q[1] === r[1]) t.exact++;
+        }
+        perMatch.push(row);
+      }
+    }
+  } finally {
+    STATE.fit = savedFit;                             // 表示用の fit を必ず戻す
+  }
+
+  const finish = (t) => ({
+    ...t,
+    hitRate: t.n ? t.hit / t.n : null,
+    brierAvg: t.n ? t.brier / t.n : null,
+    llAvg: t.hasLL && t.n ? t.ll / t.n : null,
+    exactRate: t.n ? t.exact / t.n : null,
+  });
+  return {
+    people: people.map((p) => finish(tally.get(p.key))),
+    model: finish(model), base: finish(base), rate,
+    perMatch, matches: model.n,
+  };
+}
+
+/* ==========================================================================
+   3-b-2) 封印コード（締切をグループチャットに証明してもらう）
+
+   サーバーが無いので「いつ入力したか」を自分の端末では証明できない（30-7章）。
+   そこで、すでにサーバー側の時刻記録を持っているもの——LINEやDiscordの投稿時刻——を
+   証人として借りる。
+
+     1) キックオフ前に、予想のハッシュ（封印コード）をグループに貼る
+     2) 試合後に、予想の本体と秘密の文字列（salt）を共有する
+     3) 受け取った側がハッシュを再計算し、チャットのコードと一致するか照合する
+
+   ハッシュなので貼った時点で中身は分からない。あとで予想を変えると一致しなくなる。
+   salt を混ぜているのは、混ぜないと「考えうる予想を全部試す」で中身が割れるため。
+
+   SHA-256 は自分で書いてある。crypto.subtle は file:// で使えない環境があり、
+   このアプリは「ダブルクリックで動く」ことを前提にしているため外部に頼らない。
+   実装が正しいことは verify.js が Node の crypto と突き合わせて確かめている。
+   ========================================================================== */
+const SHA_K = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+
+/** SHA-256。文字列 → 64桁の16進 */
+function sha256Hex(text) {
+  const bytes = new TextEncoder().encode(text);
+  const len = bytes.length;
+  const total = Math.ceil((len + 9) / 64) * 64;      // 1バイトの 0x80 ＋ 8バイトの長さが入る最小の倍数
+  const buf = new Uint8Array(total);
+  buf.set(bytes);
+  buf[len] = 0x80;
+  const dv = new DataView(buf.buffer);
+  const bits = len * 8;
+  dv.setUint32(total - 8, Math.floor(bits / 4294967296));
+  dv.setUint32(total - 4, bits >>> 0);
+
+  const H = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ]);
+  const w = new Uint32Array(64);
+  const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0;
+
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const x = w[i - 15], y = w[i - 2];
+      const s0 = rotr(x, 7) ^ rotr(x, 18) ^ (x >>> 3);
+      const s1 = rotr(y, 17) ^ rotr(y, 19) ^ (y >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + SHA_K[i] + w[i]) >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const mj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + mj) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0;
+      d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+  }
+  let out = "";
+  for (const x of H) out += x.toString(16).padStart(8, "0");
+  return out;
+}
+
+/** 封印の対象になる文字列。その節の10試合ぶんを、未記入も含めて全部入れる */
+function sealPayload(lg, w, salt, picks) {
+  const cells = [];
+  for (let i = 0; i < PER_WEEK; i++) {
+    const q = picks[`${w}.${i}`];
+    cells.push(q ? `${q[0]}-${q[1]}` : "_");
+  }
+  return `jleague-seal-v1|${lg}|${w}|${salt}|${cells.join(",")}`;
+}
+
+/** 表示用の封印コード。48ビットあれば身内で衝突・総当たりの心配はない */
+const fmtCode = (hex) => `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}`;
+const sealCodeOf = (lg, w, salt, picks) => fmtCode(sha256Hex(sealPayload(lg, w, salt, picks)));
+const myCode = (w) => sealCodeOf(LG, w, ME.salt, STATE.picks);
+
+/** 秘密の文字列。無ければ作る。予測されにくければよい */
+function ensureSalt() {
+  if (ME.salt && /^[0-9a-f]{16}$/.test(ME.salt)) return ME.salt;
+  let s = "";
+  const g = typeof crypto !== "undefined" && crypto.getRandomValues;
+  if (g) {
+    const a = new Uint8Array(8);
+    crypto.getRandomValues(a);
+    for (const b of a) s += b.toString(16).padStart(2, "0");
+  } else {
+    while (s.length < 16) s += Math.floor(Math.random() * 16).toString(16);
+  }
+  ME.salt = s;
+  return s;
+}
+
+/** その節の締切（10試合のうち最も早いキックオフ）。封印はこれより前にする */
+function roundDeadline(w) {
+  let best = null;
+  for (let i = 0; i < PER_WEEK; i++) {
+    const dl = deadlineOf(w, i);
+    if (dl != null && (best == null || dl < best)) best = dl;
+  }
+  return best;
+}
+const roundClosed = (w) => { const dl = roundDeadline(w); return dl != null && now() >= dl; };
+const isSealed = (w) => Boolean(STATE.sealed[String(w)]);
+
+/** 封印する。以後その節の予想は変更できない（変えるとコードが合わなくなるため） */
+function sealRound(w) {
+  if (roundClosed(w)) return false;
+  ensureSalt();
+  STATE.sealed[String(w)] = 1;
+  save();
+  return true;
+}
+/** 封印を解く。締切前だけ。解いて入れ直したらコードを貼り直すことになる */
+function unsealRound(w) {
+  if (roundClosed(w)) return false;
+  delete STATE.sealed[String(w)];
+  save();
+  return true;
+}
+
+/** チャットに貼る文面 */
+const sealMessage = (w) =>
+  `【${LG} 第${w}節 予想の封印】${ME.name.trim() || "名前なし"}\n` +
+  `${myCode(w)}\n` +
+  `※キックオフ後に予想を公開します。この数字が変わっていたら予想を書き換えた証拠です。`;
+
+/* ==========================================================================
+   3-c) 予想の共有（サーバーを使わない）
+
+   予想だけを短い文字列にして、URL かコピペで渡す。
+   結果・離脱者・名前以外は入れない（他人の端末の状態を上書きしないため）。
+   1試合を2文字（36進数の得点2つ）にし、38節×10試合＝760文字の固定長にする。
+   使う文字が [0-9a-z.] だけなので、URL にそのまま載せられる。
+   ========================================================================== */
+/* 版1 予想だけ / 版2 ＋締切前フラグ / 版3 ＋封印の照合用（salt と封印済みの節）。
+   古い版も読める。 */
+const SHARE_V = "3";
+const b36 = (n) => Math.max(0, Math.min(35, n)).toString(36);
+
+function encodePicks(picks) {
+  let s = "";
+  for (let w = 1; w <= WEEKS; w++) {
+    for (let i = 0; i < PER_WEEK; i++) {
+      const q = picks[`${w}.${i}`];
+      s += q ? b36(q[0]) + b36(q[1]) : "..";
+    }
+  }
+  return s;
+}
+function decodePicks(s) {
+  const out = {};
+  if (typeof s !== "string" || s.length !== WEEKS * PER_WEEK * 2) return null;
+  for (let w = 1; w <= WEEKS; w++) {
+    for (let i = 0; i < PER_WEEK; i++) {
+      const at = ((w - 1) * PER_WEEK + i) * 2;
+      const c = s.slice(at, at + 2);
+      if (c === "..") continue;
+      const hg = parseInt(c[0], 36), ag = parseInt(c[1], 36);
+      if (Number.isNaN(hg) || Number.isNaN(ag)) return null;
+      out[`${w}.${i}`] = [hg, ag];
+    }
+  }
+  return out;
+}
+
+/** 締切前フラグ。1試合1文字 o=締切前 / x=締切後 / .=予想なし・不明 */
+function encodeFlags(picks, pickAt) {
+  let s = "";
+  for (let w = 1; w <= WEEKS; w++) {
+    for (let i = 0; i < PER_WEEK; i++) {
+      const key = `${w}.${i}`;
+      if (!picks[key]) { s += "."; continue; }
+      const f = onTime(key, pickAt?.[key]);
+      s += f === "?" ? "." : f;
+    }
+  }
+  return s;
+}
+function decodeFlags(s) {
+  const out = {};
+  if (typeof s !== "string" || s.length !== WEEKS * PER_WEEK) return null;
+  for (let w = 1; w <= WEEKS; w++) {
+    for (let i = 0; i < PER_WEEK; i++) {
+      const c = s[(w - 1) * PER_WEEK + i];
+      if (c === "o" || c === "x") out[`${w}.${i}`] = c;
+      else if (c !== ".") return null;
+    }
+  }
+  return out;
+}
+
+/** 封印済みの節。38文字の 1/0 */
+const encodeSealed = (sealed) =>
+  Array.from({ length: WEEKS }, (_, i) => (sealed[String(i + 1)] ? "1" : "0")).join("");
+function decodeSealed(s) {
+  if (typeof s !== "string" || s.length !== WEEKS || /[^01]/.test(s)) return null;
+  const out = {};
+  for (let i = 0; i < WEEKS; i++) if (s[i] === "1") out[String(i + 1)] = 1;
+  return out;
+}
+
+/** 共有文字列。名前に記号が入っても壊れないよう名前だけURIエンコードする */
+const shareString = () => [
+  SHARE_V, LG, encodeURIComponent(ME.name.trim() || "名前なし"),
+  encodePicks(STATE.picks), encodeFlags(STATE.picks, STATE.pickAt),
+  ME.salt || "0".repeat(16), encodeSealed(STATE.sealed),
+].join("~");
+
+const SHARE_PARTS = { 1: 4, 2: 5, 3: 7 };
+function parseShare(text) {
+  const raw = String(text ?? "").trim();
+  const body = raw.includes("#p=") ? raw.slice(raw.indexOf("#p=") + 3) : raw;
+  const parts = body.split("~");
+  const v = parts[0];
+  if (!SHARE_PARTS[v] || parts.length !== SHARE_PARTS[v]) return null;
+  const [, lg, name, slots, flagStr, salt, sealStr] = parts;
+  if (!LEAGUES[lg]) return null;
+  const picks = decodePicks(slots);
+  if (!picks) return null;
+  /* 版1にはフラグが無い。締切前かどうか分からないので空にする（採点では "?" 扱い）*/
+  const flags = v === "1" ? {} : decodeFlags(flagStr);
+  if (flags === null) return null;
+  /* 版3だけ封印の照合ができる。古い版は salt が無いので照合しない */
+  let sealed = {}, mySalt = "";
+  if (v === "3") {
+    if (!/^[0-9a-f]{16}$/.test(salt)) return null;
+    sealed = decodeSealed(sealStr);
+    if (sealed === null) return null;
+    mySalt = salt;
+  }
+  let nm2 = "";
+  try { nm2 = decodeURIComponent(name); } catch { return null; }
+  return { lg, name: nm2.trim().slice(0, 24) || "名前なし", picks, flags, salt: mySalt, sealed };
+}
+
+/**
+ * 貼られた封印コードが、公開された予想と一致するか照合する。
+ * 一致した人と節を返す。合わなければ null。
+ */
+function checkCode(input) {
+  const code = String(input ?? "").trim().toLowerCase().replace(/[^0-9a-f]/g, "");
+  if (code.length !== 12) return null;
+  const want = fmtCode(code);
+  const cands = [{ name: ME.name.trim() || "あなた", salt: ME.salt, picks: STATE.picks, me: true }];
+  for (const [name, rec] of Object.entries(PEERS[LG] ?? {})) {
+    if (rec.salt) cands.push({ name, salt: rec.salt, picks: rec.picks ?? rec, me: false });
+  }
+  for (const c of cands) {
+    if (!c.salt) continue;
+    for (let w = 1; w <= WEEKS; w++) {
+      if (sealCodeOf(LG, w, c.salt, c.picks) === want) return { ...c, week: w, code: want };
+    }
+  }
+  return null;
+}
+
+/** 共有リンク。file:// でも hash は付くので、そのまま送れる */
+const shareLink = () => location.href.split("#")[0] + "#p=" + shareString();
+
+/** 受け取った予想を取り込む。同じ名前なら差し替える */
+function importShare(text) {
+  const got = parseShare(text);
+  if (!got) return null;
+  if (got.name === (ME.name.trim() || "名前なし")) return { ...got, self: true };
+  (PEERS[got.lg] ??= {})[got.name] =
+    { picks: got.picks, flags: got.flags, salt: got.salt, sealed: got.sealed };
+  save();
+  return got;
+}
+
+/** リンクで開かれたときは、その予想を取り込んでから始める */
+function importFromUrl() {
+  if (!location.hash.startsWith("#p=")) return null;
+  const got = importShare(location.hash);
+  history.replaceState(null, "", location.href.split("#")[0]);   // 二重取り込みを防ぐ
+  return got;
 }
 
 /** リーグを切り替える（保存 → データ差し替え → 再推定 → 再描画） */
@@ -1750,6 +2396,45 @@ function renderWeek() {
     };
     const inp = (s, v) => `<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="20"`
       + ` value="${v ?? ""}" data-k="${key}" data-s="${s}" aria-label="${s === 0 ? "ホーム" : "アウェイ"}の得点">`;
+    /* 自分の予想。結果（inp）とは別の data 属性にして、絶対に混ざらないようにする。
+       締切を過ぎたら入力できないようにする（disabled）。 */
+    /* 封印した節は締切前でも変更できない。変えたらチャットに貼ったコードと合わなくなる */
+    const closed = isClosed(w, i) || isSealed(w);
+    const pinp = (s, v) => `<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="20"`
+      + ` value="${v ?? ""}" data-p="${key}" data-s="${s}"${closed ? " disabled" : ""}`
+      + ` aria-label="あなたの予想（${s === 0 ? "ホーム" : "アウェイ"}）">`;
+    const my = STATE.picks[key];
+    const myFlag = my ? onTime(key, STATE.pickAt[key]) : null;
+    /* 結果が出ていれば、当たったかどうかを出す */
+    const judge = (q) => {
+      if (!r || !q) return "";
+      const okOut = outcomeOf(q[0], q[1]) === outcomeOf(r[0], r[1]);
+      const exact = q[0] === r[0] && q[1] === r[1];
+      return exact ? `<span class="ok">的中（スコアまで）</span>`
+        : okOut ? `<span class="ok">的中</span>` : `<span class="ng">はずれ</span>`;
+    };
+    /* 締切後に入れた予想は「参考」と出す。的中率には入れない */
+    const lateTag = (f) => f === "x" ? `<span class="flag">締切後（採点外）</span>`
+      : f === "?" ? `<span class="hint">時刻不明</span>` : "";
+    const peerNames = Object.keys(PEERS[LG] ?? {});
+    const peerRow = peerNames.length ? `
+      <div class="peers">${peerNames.map((n2) => {
+        const rec = PEERS[LG][n2];
+        const q = (rec.picks ?? rec)[key];
+        const f = (rec.flags ?? {})[key] ?? "?";
+        return `<span class="peer" title="${esc(n2)} の予想">${esc(n2)}：` +
+          (q ? `<b>${q[0]}-${q[1]}</b> ${judge(q)}${lateTag(f)}`
+             : `<span class="hint">未記入</span>`) + `</span>`;
+      }).join("")}</div>` : "";
+    const pickBlock = `
+      <div class="pickrow">
+        <span class="plab">あなたの予想</span>
+        <div class="score">${pinp(0, my?.[0])}<span class="sep">-</span>${pinp(1, my?.[1])}${
+          my && !closed ? `<button data-pclr="${key}" title="予想を消す" aria-label="予想を消す">×</button>` : ""}</div>
+        ${judge(my)}${lateTag(myFlag)}
+        <span class="hint">${isSealed(w) ? "封印済み・変更できません"
+          : isClosed(w, i) ? "締切済み・変更できません" : deadlineLabel(w, i)}</span>
+      </div>${peerRow}`;
     const mid = r
       ? `<div class="done">${r[0]} - ${r[1]}</div>
          <div class="score">${inp(0, r[0])}<span class="sep">-</span>${inp(1, r[1])}
@@ -1799,14 +2484,60 @@ function renderWeek() {
         <div class="mfoot" style="margin-top:8px;display:block">スコア上位：${
           p.scores.slice(0, 5).map((s) => `${s.i}-${s.j} <b>${pct(s.p)}%</b>`).join(" ／ ")}</div>
       </details>`}
+      ${pickBlock}
     </div>`;
   }).join("");
 
   const done = FIXTURES[w - 1].filter((_, i) => STATE.results[`${w}.${i}`]).length;
+  const mine = FIXTURES[w - 1].filter((_, i) => STATE.picks[`${w}.${i}`]).length;
+
+  /* 封印パネル。締切（その節の最も早いキックオフ）より前だけ操作できる */
+  const rdl = roundDeadline(w);
+  const rclosed = roundClosed(w);
+  const rdlLabel = rdl == null ? "日程未定" : (() => {
+    const j = new Date(rdl + JST_OFFSET);
+    return `${j.getUTCMonth() + 1}/${j.getUTCDate()} ` +
+      `${String(j.getUTCHours()).padStart(2, "0")}:${String(j.getUTCMinutes()).padStart(2, "0")}`;
+  })();
+  const sealPanel = isSealed(w) ? `
+    <div class="sealbox">
+      <div><b>この節は封印済み</b> <span class="ok">${myCode(w)}</span></div>
+      <div class="row" style="margin-top:6px">
+        <button id="sealCopy">チャットに貼る文面をコピー用に出す</button>
+        ${rclosed ? "" : `<button id="sealOff">封印を解く（締切前のみ）</button>`}
+      </div>
+      <div class="hint" style="margin-top:6px">
+        ${rclosed ? "締切を過ぎたので解けません。予想は変更できません。"
+          : "解いて予想を直したら、新しいコードを貼り直してください（古いコードは無効になります）。"}
+      </div>
+    </div>`
+    : rclosed ? `
+    <div class="sealbox">
+      <div class="hint"><b>封印なし</b>（この節は ${rdlLabel} に始まっているため、もう封印できません）</div>
+    </div>`
+    : `
+    <div class="sealbox">
+      <div class="row">
+        <button class="primary" id="sealOn">この節の予想を封印する</button>
+        <span class="hint">締切 ${rdlLabel}（この節の最初のキックオフ）</span>
+      </div>
+      <div class="hint" style="margin-top:6px">
+        封印すると<b>予想のハッシュ（封印コード）</b>が出ます。それをキックオフ前にグループへ貼ってください。
+        中身は分かりませんが、あとで予想を書き換えるとコードが合わなくなります。
+        <b>封印するとこの節の予想は変更できなくなります。</b>
+      </div>
+    </div>`;
+
   $("week").innerHTML = `
-    <h2 style="margin-top:4px">第${w}節 <span class="tag">${done}/10試合 入力済み</span></h2>
+    <h2 style="margin-top:4px">第${w}節 <span class="tag">結果 ${done}/10</span>
+      <span class="tag">あなたの予想 ${mine}/10</span>
+      ${isSealed(w) ? '<span class="tag">封印済み</span>' : ""}</h2>
+    ${sealPanel}
     ${html}
-    <div class="note">スコアを入れて入力欄から離れると保存され、戦力・順位表・確率がすぐ更新されます。</div>`;
+    <div class="note">
+      上の<b>スコア欄は実際の結果</b>、下の<b>「あなたの予想」は自分の予想</b>です。別々に保存されます。
+      結果を入れると戦力・順位表・確率が更新され、予想は「的中率」で採点されます。
+    </div>`;
 
   for (const el of $("week").querySelectorAll("input[data-k]")) {
     el.addEventListener("change", onScore);
@@ -1814,6 +2545,52 @@ function renderWeek() {
   for (const el of $("week").querySelectorAll("button[data-clr]")) {
     el.addEventListener("click", () => { delete STATE.results[el.dataset.clr]; save(); refit(); renderAll(); });
   }
+  for (const el of $("week").querySelectorAll("input[data-p]")) {
+    el.addEventListener("change", onPick);
+  }
+  $("sealOn")?.addEventListener("click", () => {
+    if (!mine) { alert("先に予想を入れてください。"); return; }
+    const miss = 10 - mine;
+    if (miss && !confirm(`${miss}試合が未記入です。未記入のままで封印しますか？\n（未記入も封印の対象に含まれるので、後から入れられなくなります）`)) return;
+    if (!confirm("封印すると、この節の予想は変更できなくなります。よろしいですか？")) return;
+    if (!sealRound(w)) { renderWeek(); return; }
+    renderWeek(); renderShare();
+    $("shareio").value = sealMessage(w);
+    $("shareio").select();
+  });
+  $("sealOff")?.addEventListener("click", () => {
+    if (!confirm("封印を解きます。チャットに貼ったコードは無効になります。よろしいですか？")) return;
+    unsealRound(w);
+    renderWeek(); renderShare();
+  });
+  $("sealCopy")?.addEventListener("click", () => {
+    $("shareio").value = sealMessage(w);
+    $("shareio").select();
+  });
+  for (const el of $("week").querySelectorAll("button[data-pclr]")) {
+    el.addEventListener("click", () => {
+      const k = el.dataset.pclr;
+      const [ww, ii] = k.split(".").map(Number);
+      if (isClosed(ww, ii)) { renderWeek(); return; }   // 締切後は消させない
+      delete STATE.picks[k]; delete STATE.pickAt[k];
+      save(); renderWeek(); renderScore();
+    });
+  }
+}
+
+/** 自分の予想が入力されたとき。予想は戦力に影響しないので refit しない */
+function onPick(e) {
+  const box = e.target.closest(".score");
+  const key = e.target.dataset.p;
+  const [a, b] = box.querySelectorAll("input");
+  const hg = a.value === "" ? null : Math.max(0, Math.min(20, Math.round(+a.value)));
+  const ag = b.value === "" ? null : Math.max(0, Math.min(20, Math.round(+b.value)));
+  if (hg === null || ag === null || Number.isNaN(hg) || Number.isNaN(ag)) return;  // 片方だけなら確定しない
+  const [w, i] = key.split(".").map(Number);
+  if (isClosed(w, i)) { renderWeek(); return; }        // 締切後は受け付けない
+  STATE.picks[key] = [hg, ag];
+  STATE.pickAt[key] = now();                            // 締切前に入れたかを判定するため
+  save(); renderWeek(); renderScore();
 }
 
 function onScore(e) {
@@ -1920,6 +2697,162 @@ const LABELS = {
 };
 const LAB = () => LABELS[LG] ?? LABELS.J1;
 
+/**
+ * 的中率。あなた・他の人・モデル・基準率を同じ試合で採点して並べる。
+ * 指標を3つ出すのは、1つだと分からないことがあるため。
+ *   的中率     … 勝分敗を当てた割合。分かりやすいが「自信の度合い」を見ない
+ *   Brier      … 確率の当て方まで見る。外したときの罰が有限なので言い切りの予想にも使える
+ *   log loss   … 同じく確率を見るが、0%と言って外すと無限大。確率を出すモデルにだけ出す
+ */
+function renderScore() {
+  const s = scoreboard();
+  if (!s.matches) {
+    $("scoreout").innerHTML = `<div class="hint">まだ採点できません。` +
+      `結果を1試合以上入れると、ここに的中率が出ます。</div>`;
+    $("scoredetail").innerHTML = "";
+    return;
+  }
+  const num = (v, d = 1) => (v == null ? "—" : (v * 100).toFixed(d) + "%");
+  const dec = (v, d = 4) => (v == null ? "—" : v.toFixed(d));
+
+  /* 予想を1試合でも出している人だけ並べ、的中率の高い順にする */
+  const people = s.people.filter((p) => p.n > 0).sort((a, b) =>
+    (b.hitRate - a.hitRate) || (a.brierAvg - b.brierAvg));
+  const rows = [
+    ...people.map((p, i) => ({ ...p, rank: i + 1, me: p.name === (ME.name.trim() || "あなた") })),
+    s.model, s.base,
+  ];
+
+  $("scoreout").innerHTML = `
+    <table>
+      <thead><tr>
+        <th>順位</th><th>予想した人</th><th>採点</th><th>的中率</th>
+        <th>スコア完全的中</th><th>Brier</th><th>log loss</th><th>締切後</th>
+      </tr></thead>
+      <tbody>${rows.map((p) => `
+        <tr${p.me ? ' style="font-weight:700"' : ""}>
+          <td>${p.kind === "pick" ? p.rank : "—"}</td>
+          <td>${esc(p.name)}${p.me ? "（あなた）" : ""}</td>
+          <td>${p.n}試合</td>
+          <td>${num(p.hitRate)}</td>
+          <td>${num(p.exactRate)}</td>
+          <td>${dec(p.brierAvg)}</td>
+          <td>${p.hasLL ? dec(p.llAvg) : "—"}</td>
+          <td>${p.kind === "pick"
+              ? (p.late ? `<span class="flag">${p.late}件 除外</span>` : "—") +
+                (p.unknown ? `<span class="hint">不明${p.unknown}件</span>` : "")
+              : "—"}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table>`;
+
+  /* あなたとモデルの比較を一言で */
+  const me = s.people.find((p) => p.name === (ME.name.trim() || "あなた"));
+  let verdict = "";
+  if (me && me.n >= 1) {
+    const d = (me.hitRate - s.model.hitRate) * 100;
+    const same = Math.abs(d) < 1e-9;
+    verdict = `<div class="note" style="border-top:none;padding-top:0">
+      あなたは <b>${me.n}試合</b>で的中率 <b>${num(me.hitRate)}</b>。
+      同じ試合でのモデルは <b>${num(s.model.hitRate)}</b>、
+      「毎回このリーグの平均どおりに答える」基準率は <b>${num(s.base.hitRate)}</b> です。
+      ${same ? "モデルと<b>同じ</b>です。"
+        : d > 0 ? `モデルより <b class="ok">${d.toFixed(1)}ポイント上</b>です。`
+                : `モデルより <b class="ng">${(-d).toFixed(1)}ポイント下</b>です。`}
+      ${me.n < 30 ? `<br><b>ただし${me.n}試合では運の差が大きく、まだ実力差とは言えません。</b>
+        解説.md 6章と同じ理由で、数十試合は必要です。` : ""}
+    </div>`;
+  } else {
+    verdict = `<div class="note" style="border-top:none;padding-top:0">
+      あなたの予想がまだ採点されていません。上の節ビューで<b>「あなたの予想」</b>を入れ、
+      その試合の結果も入れると採点されます。</div>`;
+  }
+
+  /* 直近の採点内容（新しい節から10試合） */
+  const recent = s.perMatch.slice(-10).reverse();
+  $("scoredetail").innerHTML = verdict + `
+    <details class="det" style="margin-top:10px">
+      <summary>採点した試合の内訳（直近10試合）</summary>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>節</th><th>カード</th><th>結果</th><th>あなた</th><th>モデルの確率</th></tr></thead>
+          <tbody>${recent.map((m) => {
+            const q = m.picks["__me__"];
+            const mp = m.model[m.act];
+            return `<tr>
+              <td>第${m.w}節</td>
+              <td>${esc(m.h)} - ${esc(m.a)}</td>
+              <td>${m.r[0]}-${m.r[1]}<span class="hint">（${OUT_LABEL[m.act]}）</span></td>
+              <td>${q ? `${q[0]}-${q[1]} ` + (outcomeOf(q[0], q[1]) === m.act
+                    ? '<span class="ok">○</span>' : '<span class="ng">×</span>') : '<span class="hint">未記入</span>'}</td>
+              <td>${pct(mp)}%<span class="hint">（実際に起きた方に付けていた確率）</span></td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table>
+      </div>
+    </details>`;
+}
+
+/** 読み込んだ他の人の一覧（削除もできる） */
+function renderShare() {
+  $("myname").value = ME.name;
+  const names = Object.keys(PEERS[LG] ?? {});
+  $("peerList").innerHTML = !names.length
+    ? `<div class="hint">まだ誰の予想も読み込んでいません。相手から届いたリンクか文字列を上の欄に貼ってください。</div>`
+    : `<div style="font-size:.8rem;font-weight:600;margin-bottom:6px">読み込んだ人（${LG}）</div>
+       <div class="peers">${names.map((n2) => {
+         const cnt = Object.keys(PEERS[LG][n2]).length;
+         return `<span class="peer">${esc(n2)}<span class="hint">${cnt}試合</span>` +
+           `<button data-del="${esc(n2)}" title="この人を消す" aria-label="この人を消す">×</button></span>`;
+       }).join("")}</div>`;
+  for (const el of $("peerList").querySelectorAll("button[data-del]")) {
+    el.addEventListener("click", () => {
+      delete PEERS[LG][el.dataset.del];
+      save(); renderShare(); renderWeek(); renderScore();
+    });
+  }
+  renderSealTable();
+}
+
+/**
+ * 封印済みの節の封印コード一覧。チャットに貼られたものと目で見比べるための表。
+ * 自分の分と、salt を共有してくれた人の分を出す（版3の共有文字列だけ salt を含む）。
+ */
+function renderSealTable() {
+  const rows = [];
+  const mineSealed = Object.keys(STATE.sealed).map(Number).sort((a, b) => a - b);
+  if (ME.salt && mineSealed.length) {
+    rows.push({ name: (ME.name.trim() || "あなた") + "（あなた）", weeks: mineSealed, salt: ME.salt, picks: STATE.picks });
+  }
+  for (const [name, rec] of Object.entries(PEERS[LG] ?? {})) {
+    if (!rec.salt) continue;
+    const ws = Object.keys(rec.sealed ?? {}).map(Number).sort((a, b) => a - b);
+    if (ws.length) rows.push({ name, weeks: ws, salt: rec.salt, picks: rec.picks ?? rec });
+  }
+  if (!rows.length) {
+    $("sealTable").innerHTML = `<div class="hint">封印された節がまだありません。` +
+      `節ビューの「この節の予想を封印する」から始めてください。<br>` +
+      `他の人の分は、<b>その人が版3（封印つき）で共有</b>したときだけ出ます。</div>`;
+    return;
+  }
+  $("sealTable").innerHTML = `
+    <div class="scroll">
+      <table>
+        <thead><tr><th>人</th><th>封印した節</th><th>封印コード</th></tr></thead>
+        <tbody>${rows.flatMap((r) => r.weeks.map((w, k) => `
+          <tr>
+            <td>${k === 0 ? esc(r.name) : ""}</td>
+            <td>第${w}節</td>
+            <td class="codecell">${sealCodeOf(LG, w, r.salt, r.picks)}</td>
+          </tr>`)).join("")}
+        </tbody>
+      </table>
+    </div>
+    <div class="hint" style="margin-top:6px">
+      この表の値が、チャットに貼られたコードと一致していれば書き換えはありません。
+    </div>`;
+}
+
 function renderTabs() {
   for (const b of document.querySelectorAll("button[data-lg]")) {
     b.setAttribute("aria-current", String(b.dataset.lg === LG));
@@ -1927,7 +2860,10 @@ function renderTabs() {
   document.title = `${LG} 節別予想 2026-27`;
 }
 
-function renderAll() { renderTabs(); renderTableNote(); renderBadges(); renderNav(); renderWeek(); renderTable(); renderSim(); renderCond(); }
+function renderAll() {
+  renderTabs(); renderTableNote(); renderBadges(); renderNav(); renderWeek();
+  renderTable(); renderSim(); renderCond(); renderScore(); renderShare();
+}
 
 /* ==========================================================================
    6) 起動と操作
@@ -1987,12 +2923,90 @@ $("imp").addEventListener("click", () => {
   } catch (e) { $("io").value = "JSONとして読めませんでした：" + e.message; }
 });
 $("reset").addEventListener("click", () => {
-  if (!confirm("入力した結果と離脱者を全部消します。よろしいですか？")) return;
+  if (!confirm("入力した結果・予想・離脱者を全部消します（読み込んだ他の人の予想も消えます）。よろしいですか？")) return;
   STATE.results = {}; STATE.cond = {}; STATE.week = 1;
+  for (const k of Object.keys(STATE.picks)) delete STATE.picks[k];
+  for (const k of Object.keys(STATE.pickAt)) delete STATE.pickAt[k];
+  for (const k of Object.keys(STATE.sealed)) delete STATE.sealed[k];
+  PEERS[LG] = {};
   save(); refit(); renderAll();
 });
 
+/* ---------------------------------------------------------------- 共有の操作 */
+
+$("myname").addEventListener("change", () => {
+  ME.name = $("myname").value.trim().slice(0, 24);
+  save(); renderScore(); renderWeek();
+});
+$("shareLink").addEventListener("click", () => {
+  if (!Object.keys(STATE.picks).length) {
+    $("shareio").value = "まだ予想が入っていません。節ビューで「あなたの予想」を入れてください。";
+    return;
+  }
+  ensureSalt(); save();      // 封印の照合に使う秘密の文字列を共有文字列に載せるため
+  $("shareio").value = shareLink();
+  $("shareio").select();
+});
+$("shareJson").addEventListener("click", () => {
+  if (!Object.keys(STATE.picks).length) {
+    $("shareio").value = "まだ予想が入っていません。節ビューで「あなたの予想」を入れてください。";
+    return;
+  }
+  ensureSalt(); save();      // 封印の照合に使う秘密の文字列を共有文字列に載せるため
+  $("shareio").value = shareString();
+  $("shareio").select();
+});
+$("codeChk").addEventListener("click", () => {
+  const raw = $("codeIn").value.trim();
+  if (!raw) { $("codeOut").innerHTML = `<span class="hint">コードを入れてください。</span>`; return; }
+  const hit = checkCode(raw);
+  if (!hit) {
+    $("codeOut").innerHTML = `<span class="ng">一致しませんでした。</span> ` +
+      `<span class="hint">考えられる理由：予想が書き換えられた／まだその人の予想を読み込んでいない／` +
+      `相手が版3（封印つき）で共有していない／コードの写し間違い。</span>`;
+    return;
+  }
+  const sealedFlag = hit.me ? isSealed(hit.week)
+    : Boolean((PEERS[LG][hit.name]?.sealed ?? {})[String(hit.week)]);
+  $("codeOut").innerHTML = `<span class="ok">一致しました。</span> ` +
+    `<b>${esc(hit.name)}</b> の <b>第${hit.week}節</b> の予想です。` +
+    (sealedFlag ? "" : ` <span class="flag">ただし本人の記録では封印されていません</span>`) +
+    `<br><span class="hint">この予想は、そのコードをチャットに貼った時点で確定していたことになります。` +
+    `時刻の根拠はチャットの投稿時刻です。</span>`;
+});
+$("codeIn").addEventListener("keydown", (e) => { if (e.key === "Enter") $("codeChk").click(); });
+
+$("shareImp").addEventListener("click", () => {
+  const got = importShare($("shareio").value);
+  if (!got) {
+    $("shareio").value = "読み取れませんでした。相手から届いたリンク（#p=… を含む全体）か、" +
+      "「予想をコピー用に出す」で出た文字列をそのまま貼ってください。";
+    return;
+  }
+  if (got.self) {
+    $("shareio").value = `「${got.name}」はあなた自身の名前です。` +
+      `自分の予想は上書きしません。名前を変えてから読み込んでください。`;
+    return;
+  }
+  const n = Object.keys(got.picks).length;
+  if (got.lg !== LG) { useLeague(got.lg); bindLeague(); refit(); }
+  $("shareio").value = `${got.name} さんの予想 ${n}試合を読み込みました（${got.lg}）。`;
+  renderAll();
+});
+
+/* リンクで開かれた場合は、その予想を取り込んでから描く */
+const arrived = importFromUrl();
+if (arrived && !arrived.self && LEAGUES[arrived.lg] && arrived.lg !== LG) {
+  useLeague(arrived.lg); bindLeague(); refit();
+}
+
 renderAll();
+
+if (arrived) {
+  $("shareio").value = arrived.self
+    ? `届いた予想の名前「${arrived.name}」はあなた自身の名前と同じでした。読み込んでいません。`
+    : `${arrived.name} さんの予想 ${Object.keys(arrived.picks).length}試合を読み込みました。`;
+}
 </script>
 
 </body>

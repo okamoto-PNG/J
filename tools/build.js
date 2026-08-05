@@ -16,12 +16,14 @@
 const fs = require("fs");
 const path = require("path");
 const { load } = require("./lib/data");
+/* シーズンの境界・区間・予想対象ファイル名はすべてここから。直書きしない */
+const S = require("./lib/season").require();
 
 const ROOT = path.join(__dirname, "..");
 const DRY = process.argv.includes("--dry");
 
 const j1 = load("j1-matches.json");
-const f26 = load("j1-2026.json");
+const f26 = load(S.files.J1);
 const params = load("params.json");
 const promoted = load("promoted.json");
 
@@ -56,20 +58,26 @@ const DATA = sorted
   .map((m) => `${m.s - BASE_SEASON}.${IDX.get(m.h)}.${IDX.get(m.a)}.${m.hg}.${m.ag}`)
   .join(";");
 
-/** 2026-27 の日程。1試合＝ホーム・アウェイの2文字、20文字で1節 */
-const AB = "0123456789ABCDEFGHIJ";
+/* ★節数・1節の試合数・クラブ数は data/season.json から取る（直書きしない）。
+   J1・J2 は 20クラブ・38節だが、そう決め打つと構成が変わった年に静かに壊れる。 */
+const WEEKS = S.leagues.J1.weeks;
+const PER_WEEK = S.leagues.J1.perWeek;
+const N_CLUBS = S.leagues.J1.clubs;
+
+/** 予想対象シーズンの日程。1試合＝ホーム・アウェイの2文字、クラブ数ぶんの文字で1節 */
+const AB = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".slice(0, N_CLUBS);
 const J1_2627 = keepOrder("節別予想.html", /const J1 = (\[[\s\S]*?\]);/,
   [...new Set(f26.flatMap((m) => [m.h, m.a]))].sort());
 const J26 = new Map(J1_2627.map((c, i) => [c, i]));
 let FIXTURES_RAW = "";
-for (let w = 1; w <= 38; w++) {
+for (let w = 1; w <= WEEKS; w++) {
   const week = f26.filter((m) => m.round === w)
     .sort((a, b) => (a.date ?? "9") < (b.date ?? "9") ? -1 : 1);
   for (const m of week) FIXTURES_RAW += AB[J26.get(m.h)] + AB[J26.get(m.a)];
 }
 
 /** 節ごとの日付（先頭の試合日）。表示と「未消化の節」判定に使えるようにしておく */
-const ROUND_DATES = Array.from({ length: 38 }, (_, i) => {
+const ROUND_DATES = Array.from({ length: WEEKS }, (_, i) => {
   const ds = f26.filter((m) => m.round === i + 1 && m.date).map((m) => m.date).sort();
   return ds[0] ?? null;
 });
@@ -97,6 +105,35 @@ const SOURCE_TEXT = "Ｊリーグ公式データサイト（data.j-league.or.jp�
 replace("CLUBS", /const CLUBS = \[[\s\S]*?\];/,
   `const CLUBS = [${CLUBS.map((c) => `"${c}"`).join(",")}];`);
 
+/* ★シーズンと構造の定数もここで生成する。
+   以前はHTML側に 2026 / 38 / 10 / Date.UTC(2026,0,1) が直書きされていて、
+   シーズンが変わるとHTMLを手で直す必要があった。verify.js が食い違いを検出する。 */
+/* ★シーズンの定数は index.html と 節別予想.html の両方に入っている。
+   共通の edits は index.html 用（wk では HIST/LEAGUES に置き換わる）なので、
+   ここだけは別の配列にして両方に混ぜる。片方だけに入れて公開版が古いまま残ったことがある。 */
+const seasonConsts = [];
+const both = (label, re, next) => seasonConsts.push({ label, re, next });
+
+both("SEASON", /const SEASON = \d+;/, `const SEASON = ${S.upcoming};`);
+both("WEEKS・PER_WEEK", /const WEEKS = \d+, PER_WEEK = \d+;.*/,
+  `const WEEKS = ${WEEKS}, PER_WEEK = ${PER_WEEK};   ` +
+  `// data/season.json より（${N_CLUBS}クラブ・${WEEKS}節・1節${PER_WEEK}試合）`);
+/* 締切を数える基準日。実データの最も早い試合日（data/season.json が導出） */
+both("KO_EPOCH（締切の基準日）", /const KO_EPOCH = Date\.UTC\([^)]*\);.*/, () => {
+  const [y, m, d] = S.koEpochDate.split("-").map(Number);
+  return `const KO_EPOCH = Date.UTC(${y}, ${m - 1}, ${d});   // ${S.koEpochDate}（最も早い試合日）`;
+});
+
+/* index.html の所属クラブ。以前は手で並べていて、毎季ここを直す必要があった。
+   5クラブずつ折り返して読みやすくしておく。 */
+replace("TEAMS（予想対象シーズンの所属クラブ）", /const TEAMS = \[[\s\S]*?\n\];/, () => {
+  const rows = [];
+  for (let i = 0; i < J1_2627.length; i += 5) {
+    rows.push("  " + J1_2627.slice(i, i + 5).map((c) => `"${c}"`).join(", ") + ",");
+  }
+  return `const TEAMS = [\n${rows.join("\n")}\n];`;
+});
+
 replace("DATA", /const DATA =[\s\S]*?;\n/,
   `const DATA =\n  ${wrap(DATA, 100, "  ")};\n`);
 
@@ -120,15 +157,16 @@ replace("P（パラメータ）", /const P = \{[\s\S]*?\n\};/, (block) =>
 /** 両ファイル共通：データ節の見出しコメント（既にある生成メモの行もまとめて置き換える） */
 replace("データ節の見出し",
   /   0\) データ.*\n(?:      tools\/fetch\.js .*\n)*/,
-  `   0) データ（Ｊリーグ公式データサイトから取得した 2015-2025 の J1 全${j1.length}試合）\n` +
+  `   0) データ（Ｊリーグ公式データサイトから取得した ${S.first}-${S.histEnd} の J1 全${j1.length}試合）\n` +
   `      tools/fetch.js → tools/parse.js → tools/build.js で生成。手で書き換えないこと\n`);
 
 const idx = [
   ...edits,
+  ...seasonConsts,
   {
     label: "見出しのデータ出典",
     re: /<p class="sub">過去[\s\S]*?<\/p>/,
-    next: `<p class="sub">過去11シーズン（2015-2025）のJ1全${j1.length}試合から算出。` +
+    next: `<p class="sub">過去${S.histEnd - S.first + 1}シーズン（${S.first}-${S.histEnd}）のJ1全${j1.length}試合から算出。` +
       `データ出典：${SOURCE_TEXT}（試合日つき）</p>`,
   },
   {
@@ -143,15 +181,15 @@ const idx = [
     label: "パラメータの説明コメント",
     re: /   1\) モデルのパラメータ\n[\s\S]*?グリッドサーチして log loss を最小化した値（解説\.md「6\. 精度検証」）/,
     next: `   1) モデルのパラメータ\n` +
-      `      tools/tune.js が 2018-2025 の ${accuracy.matches}試合を日付順にバックテストして決めた値。\n` +
-      `      学習区間(2018-22)と検証区間(2023-25)の両方で log loss が下がったものだけを採用している。\n` +
+      `      tools/tune.js が ${S.firstEval}-${S.histEnd} の ${accuracy.matches}試合を日付順にバックテストして決めた値。\n` +
+      `      学習区間(${S.train.join("-")})と検証区間(${S.test.join("-")})の両方で log loss が下がったものだけを採用している。\n` +
       `      手で書き換えないこと（data/params.json が正）`,
   },
   {
     label: "日程補正の注記（画面）",
     re: /      日程の負荷は<b>実データから推定できない項目<\/b>です[\s\S]*?を参照してください。/,
     next: `      試合日を入れて実測した結果、<b>日程による有利不利は検出できませんでした</b>` +
-      `（2018-2025の${accuracy.matches}試合）。\n` +
+      `（${S.firstEval}-${S.histEnd}の${accuracy.matches}試合）。\n` +
       `      補正を効かせるほど log loss は悪化します。そのため<b>既定では何も効きません</b>。\n` +
       `      ここは「もし中2日なら」と手で仮定を置くための欄で、<b>実測の裏付けはありません</b>。詳細は\n` +
       `      <a href="解説.md">解説.md</a> の「7. 日程補正の扱い」を参照してください。`,
@@ -168,7 +206,7 @@ const idx = [
     label: "フッタの出典",
     re: /    データ出典：<a href="https:\/\/ja\.wikipedia\.org[\s\S]*?（CC BY-SA）。<br>/,
     next: `    データ出典：<a href="https://data.j-league.or.jp/SFMS01/" target="_blank" rel="noopener">` +
-      `Ｊリーグ公式データサイト</a> の日程・結果（2015-2025 J1 全${j1.length}試合／試合日・会場つき）。<br>`,
+      `Ｊリーグ公式データサイト</a> の日程・結果（${S.first}-${S.histEnd} J1 全${j1.length}試合／試合日・会場つき）。<br>`,
   },
 ];
 
@@ -176,9 +214,16 @@ const idx = [
    こちらは J1 と J2 の2リーグぶんを埋め込む。
    1リーグ = 学習データ（HIST）＋ 今季の日程とパラメータ（LEAGUES）。          */
 
-const j2hist = load("j2-matches.json").filter((m) => m.s <= 2025 && m.hg != null);
-const f26j2 = load("j2-2026.json");
+const j2hist = load("j2-matches.json").filter((m) => m.s <= S.histEnd && m.hg != null);
+const f26j2 = load(S.files.J2);
 const paramsJ2 = load("params-j2.json");
+/* J2 の新顔をクラブ別に評価した結果（tools/calibrate-j3.js）。
+   採用されていなければ空にして、従来どおり混ぜた平均1組だけを埋め込む。 */
+let byClubJ2 = {};
+try {
+  const cj3 = load("calib-j3.json");
+  if (cj3.adopted && cj3.adopted !== "single") byClubJ2 = cj3.byClub ?? {};
+} catch { /* 未実測。混ぜた平均のまま */ }
 
 /** 1リーグぶんの学習データを圧縮する */
 function histOf(rows, file, re) {
@@ -193,20 +238,40 @@ function histOf(rows, file, re) {
   return { clubs, data, base };
 }
 
+/* 予想の締切に使う「試合ごとのキックオフ」。
+   1節が2〜3日に分散するので、節単位で締めると日曜の試合を予想できなくなる。
+   1試合4文字：日付（2026-01-01からの日数・36進数2桁）＋ K/O（5分単位・36進数2桁）。
+   日付が未発表なら "...."、時刻だけ未発表なら日付＋".."（アプリ側で当日0時として扱う）。
+   ※K/O時刻はJリーグが数週間前に発表するので、取得時点では半分以上が未定。 */
+const KO_EPOCH = S.koEpochUTC;   // 予想対象シーズンの1月1日（data/season.json）
+const b36pad = (n) => n.toString(36).padStart(2, "0");
+function koCode(m) {
+  if (!m.date) return "....";
+  const days = Math.round((Date.parse(m.date + "T00:00:00Z") - KO_EPOCH) / 86400000);
+  if (days < 0 || days > 1295) throw new Error(`日付が想定の範囲外: ${m.date}`);
+  const t = m.ko ? m.ko.match(/^(\d{1,2}):(\d{2})$/) : null;
+  if (!t) return b36pad(days) + "..";
+  const min = Number(t[1]) * 60 + Number(t[2]);
+  return b36pad(days) + b36pad(Math.round(min / 5));
+}
+
 /** 1リーグぶんの今季日程を圧縮する */
 function fixturesOf(rows, teams) {
   const idx = new Map(teams.map((c, i) => [c, i]));
-  let raw = "";
-  for (let w = 1; w <= 38; w++) {
+  let raw = "", kicks = "";
+  for (let w = 1; w <= WEEKS; w++) {
     const week = rows.filter((m) => m.round === w)
       .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
-    for (const m of week) raw += AB[idx.get(m.h)] + AB[idx.get(m.a)];
+    for (const m of week) {
+      raw += AB[idx.get(m.h)] + AB[idx.get(m.a)];
+      kicks += koCode(m);
+    }
   }
-  const dates = Array.from({ length: 38 }, (_, i) => {
+  const dates = Array.from({ length: WEEKS }, (_, i) => {
     const ds = rows.filter((m) => m.round === i + 1 && m.date).map((m) => m.date).sort();
     return ds[0] ?? null;
   });
-  return { raw, dates };
+  return { raw, dates, kicks };
 }
 
 const HIST_J1 = histOf(j1, "節別予想.html", /J1: \{ clubs: (\[[\s\S]*?\]), data:/);
@@ -222,17 +287,34 @@ const num = (o) => `{ atkH:${o.atkH.toFixed(4)}, defH:${o.defH.toFixed(4)}, ` +
 const pobj = (m) => "{ " + Object.entries(m)
   .map(([k, v]) => `${k}: ${v >= 1e9 ? "1e9" : v}`).join(", ") + " }";
 
-const leagueBlock = (key, label, teams, fx, P, prom) =>
+/**
+ * 履歴なしクラブの個別事前分布。
+ * 埋め込むのは「今季このリーグにいて、かつ学習データに履歴が無い」クラブだけ。
+ * 履歴があるクラブは実績から推定するので事前分布を引かない（入れても使われない）。
+ */
+const byClubBlock = (byClub, teams, hasHistory) => {
+  const rows = teams
+    .filter((c) => byClub[c] && !hasHistory.has(c))
+    .map((c) => `      "${c}": ${num(byClub[c])},`);
+  return rows.length ? `    promotedByClub: {\n${rows.join("\n")}\n    },\n` : "";
+};
+
+const leagueBlock = (key, label, teams, fx, P, prom, byClub = {}, hasHistory = new Set()) =>
   `  ${key}: {\n` +
   `    label: "${label}",\n` +
   `    teams: ${arr(teams)},\n` +
   `    fixturesRaw:\n      ${wrap(fx.raw, 80, "      ")},\n` +
   `    roundDates: ${JSON.stringify(fx.dates).replace(/","/g, '", "')},\n` +
+  `    kickoffs:\n      ${wrap(fx.kicks, 80, "      ")},\n` +
   `    P: ${pobj(P)},\n` +
   `    promoted: ${num(prom)},\n` +
+  byClubBlock(byClub, teams, hasHistory) +
   `  },\n`;
 
+const HAS_HIST_J2 = new Set(j2hist.flatMap((m) => [m.h, m.a]));
+
 const wk = [
+  ...seasonConsts,
   {
     label: "HIST（両リーグの学習データ）",
     re: /const HIST = \{[\s\S]*?\n\};\n/,
@@ -246,13 +328,13 @@ const wk = [
     re: /const LEAGUES = \{[\s\S]*?\n\};\n/,
     next: `const LEAGUES = {\n` +
       leagueBlock("J1", "J1", J1_2627, FX_J1, params.model, promoted.promotedAverage) +
-      leagueBlock("J2", "J2", J2_2627, FX_J2, paramsJ2.model, paramsJ2.newcomer) +
+      leagueBlock("J2", "J2", J2_2627, FX_J2, paramsJ2.model, paramsJ2.newcomer, byClubJ2, HAS_HIST_J2) +
       `};\n`,
   },
   {
     label: "データ節の見出し",
     re: /   0\) データ.*\n(?:      [^\n]*\n)*/,
-    next: `   0) データ（Ｊリーグ公式データサイト。J1 ${j1.length}試合 / J2 ${j2hist.length}試合、いずれも2015-2025）\n` +
+    next: `   0) データ（Ｊリーグ公式データサイト。J1 ${j1.length}試合 / J2 ${j2hist.length}試合、いずれも${S.first}-${S.histEnd}）\n` +
       `      tools/fetch.js → tools/parse.js → tools/build.js で生成。手で書き換えないこと\n`,
   },
   {
@@ -261,9 +343,9 @@ const wk = [
     next:
       `      <h3>使っているデータ</h3>\n` +
       `      <ul>\n` +
-      `        <li><b>J1 2015-2025 の全${j1.length}試合</b>（Ｊリーグ公式データサイト・試合日つき）</li>\n` +
-      `        <li><b>J2 2015-2025 の全${j2hist.length}試合</b>（同上）</li>\n` +
-      `        <li><b>2026-27シーズンの対戦カード J1・J2 各380試合</b>（同上・試合日つき）</li>\n` +
+      `        <li><b>J1 ${S.first}-${S.histEnd} の全${j1.length}試合</b>（Ｊリーグ公式データサイト・試合日つき）</li>\n` +
+      `        <li><b>J2 ${S.first}-${S.histEnd} の全${j2hist.length}試合</b>（同上）</li>\n` +
+      `        <li><b>${S.label}シーズンの対戦カード J1・J2 各${S.leagues.J1.matches}試合</b>（同上・試合日つき）</li>\n` +
       `      </ul>\n` +
       `      <p>日程データは「順序付きの対戦カードはシーズン中ちょうど1回」「各節に20クラブが1回ずつ」\n` +
       `        という総当たりの制約で検算済みです。</p>\n`,
@@ -274,8 +356,8 @@ const wk = [
     next:
       `      <h3>節が進むとどう変わるか</h3>\n` +
       `      <p>今季の試合は、過去シーズンの<b>J1で${params.model.CUR_W}倍・J2で${paramsJ2.model.CUR_W}倍</b>の重みで\n` +
-      `        戦力の推定に混ざります。この値は勘ではなく、2018-2025を試合日順にバックテストし、\n` +
-      `        <b>学習区間(2018-22)と検証区間(2023-25)の両方で改善したときだけ採用する</b>という規則で決めました。</p>\n` +
+      `        戦力の推定に混ざります。この値は勘ではなく、${S.firstEval}-${S.histEnd}を試合日順にバックテストし、\n` +
+      `        <b>学習区間(${S.train.join("-")})と検証区間(${S.test.join("-")})の両方で改善したときだけ採用する</b>という規則で決めました。</p>\n` +
       `      <ul>\n` +
       `        <li>J2 のほうが今季を重く見ます（${paramsJ2.model.CUR_W} 対 ${params.model.CUR_W}）。\n` +
       `          記憶の長さも J2 は短め（HALF_LIFE ${paramsJ2.model.HALF_LIFE} 対 ${params.model.HALF_LIFE}）で、\n` +
@@ -313,7 +395,7 @@ const wk = [
     re: /    (?:日程|戦績|データ)出典：[\s\S]*?<br>\n(?:    [^\n]*試合。<br>\n)?/,
     next: `    データ出典：<a href="https://data.j-league.or.jp/SFMS01/" target="_blank" rel="noopener">` +
       `Ｊリーグ公式データサイト</a><br>\n` +
-      `    2026-27 対戦カード J1・J2 各380試合（試合日つき）／学習データ J1 ${j1.length}試合・J2 ${j2hist.length}試合。<br>\n`,
+      `    ${S.label} 対戦カード J1・J2 各${S.leagues.J1.matches}試合（試合日つき）／学習データ J1 ${j1.length}試合・J2 ${j2hist.length}試合。<br>\n`,
   },
 ];
 
@@ -347,7 +429,7 @@ function apply(file, list) {
 
 console.log("=== data/ からアプリの定数を再生成 ===");
 console.log(`学習データ ${j1.length}試合 / クラブ ${CLUBS.length} / DATA ${(DATA.length / 1024).toFixed(1)}KB`);
-console.log(`2026-27 日程 ${FIXTURES_RAW.length / 2}試合 / 日付判明 ${ROUND_DATES.filter(Boolean).length}/38節`);
+console.log(`${S.label} 日程 ${FIXTURES_RAW.length / 2}試合 / 日付判明 ${ROUND_DATES.filter(Boolean).length}/${WEEKS}節`);
 apply("index.html", idx);
 apply("節別予想.html", wk);
 console.log("\n次は node tools/verify.js を実行して検算すること。");
@@ -361,14 +443,14 @@ const extra = [
   {
     file: "index.html",
     label: "所属クラブのコメント",
-    re: /\/\* --- 2026-27シーズンのJ1所属20クラブ（Wikipedia[^\n]*--- \*\//,
-    next: `/* --- 2026-27シーズンのJ1所属20クラブ（data/j1-2026.json より生成）--- */`,
+    re: /\/\* --- \d{4}-\d{2}シーズンのJ1所属\d+クラブ（[^\n]*--- \*\//,
+    next: `/* --- ${S.label}シーズンのJ1所属${N_CLUBS}クラブ（data/${S.files.J1} より生成）--- */`,
   },
   {
     file: "index.html",
     label: "PROMOTED の説明",
-    re: / \* 2016-2025の昇格\d+クラブ（[^）]*）から実測した。\n \* ホームとアウェイでリーグ平均得点が違う（[\d.]+ 対 [\d.]+）ので、/,
-    next: ` * 2016-2025の昇格${promoted.sampleClubs}クラブ（${promoted.sampleAppearances}試合ぶんの出場）から実測した。\n` +
+    re: / \* ${S.first + 1}-${S.histEnd}の昇格\d+クラブ（[^）]*）から実測した。\n \* ホームとアウェイでリーグ平均得点が違う（[\d.]+ 対 [\d.]+）ので、/,
+    next: ` * ${S.first + 1}-${S.histEnd}の昇格${promoted.sampleClubs}クラブ（${promoted.sampleAppearances}試合ぶんの出場）から実測した。\n` +
       ` * ホームとアウェイでリーグ平均得点が違う（` +
       `${promoted.leagueAverage.home.toFixed(3)} 対 ${promoted.leagueAverage.away.toFixed(3)}）ので、`,
   },

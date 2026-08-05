@@ -20,8 +20,9 @@
 const { run } = require("./backtest");
 const M = require("./lib/model");
 
-const TRAIN = [2018, 2022];
-const TEST = [2023, 2025];
+const SEASON_INFO = require("./lib/season").require();
+const TRAIN = SEASON_INFO.train;
+const TEST = SEASON_INFO.test;
 
 const AXES = {
   HALF_LIFE: [2, 3, 4, 5, 6, 7, 8, 10, 12],

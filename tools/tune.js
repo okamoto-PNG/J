@@ -21,8 +21,11 @@ const path = require("path");
 const { run } = require("./backtest");
 const M = require("./lib/model");
 
-const TRAIN = [2018, 2022];
-const TEST = [2023, 2025];
+/* 学習区間・検証区間は data/season.json から取る。
+   parse.js がデータから導いているので、シーズンが進んでもここを触らなくてよい。 */
+const SEASON_INFO = require("./lib/season").require();
+const TRAIN = SEASON_INFO.train;
+const TEST = SEASON_INFO.test;
 const OFF = 1e9; // H2H_K に入れると相性補正が実質無効になる
 
 /** 探索する軸と候補値 */
@@ -99,7 +102,8 @@ for (const [k, v] of Object.entries(P)) {
   console.log(`  ${k.padEnd(10)} ${show(v)}${note}`);
 }
 console.log(`  FATIGUE    ${bestTheta}${bestTheta === 0 ? "   ← 日程補正を使わない（同上）" : ""}`);
-console.log(`\n  2018-2025 全体   log loss ${final.ll.toFixed(5)}   的中率 ${(final.hit * 100).toFixed(2)}%  (${final.n}試合)`);
+console.log(`\n  ${SEASON_INFO.firstEval}-${SEASON_INFO.histEnd} 全体   log loss ${final.ll.toFixed(5)}` +
+  `   的中率 ${(final.hit * 100).toFixed(2)}%  (${final.n}試合)`);
 console.log(`  基準率（常にホーム）      ${final.llBase.toFixed(5)}          ${(final.hitBase * 100).toFixed(2)}%`);
 console.log(`  一様（1/3ずつ）          ${Math.log(3).toFixed(5)}          33.33%`);
 

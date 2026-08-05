@@ -1,0 +1,101 @@
+# 毎週 Jリーグ公式データを見て、変わっていれば作り直してコミットし、公開ページを更新する。
+#
+# PC が起動していなくても走るのが、タスクスケジューラとの違い。
+# 判定・退避・復元はすべて tools/auto.js が持っているので、ここは呼ぶだけにしてある
+# （ロジックを2箇所に置くと必ず片方が古くなる）。
+name: 自動更新
+
+on:
+  schedule:
+    # 毎週月曜 03:00 UTC = 12:00 JST。cron は UTC しか受け付けない
+    - cron: "0 3 * * 1"
+  # 手で回せるようにしておく（Actions タブの「Run workflow」）
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "更新のしかた"
+        type: choice
+        default: auto
+        options: [auto, force, rebuild, dry]
+
+permissions:
+  contents: write   # 生成物をコミットする
+  pages: write      # 公開ページを差し替える
+  id-token: write   # Pages のデプロイに必要
+
+# 走っている途中にもう1本走らせない（同じファイルを二重に書き換えないため）
+concurrency:
+  group: auto-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # 依存パッケージは tools/ai-yosou.js だけが使う。CI では入れない（npm ci しない）
+
+      - name: 自動更新を実行
+        id: auto
+        env:
+          TZ: Asia/Tokyo
+        run: |
+          case "${{ inputs.mode || 'auto' }}" in
+            force)   node tools/auto.js --force ;;
+            rebuild) node tools/auto.js --rebuild ;;
+            dry)     node tools/auto.js --dry ;;
+            *)       node tools/auto.js ;;
+          esac
+
+      # ★公開ページは毎回作る。
+      # publish/ はリポジトリで追跡していないので、チェックアウトした時点では存在しない。
+      # 「変化なし」の週は auto.js が何もせずに終わるため、ここで作らないと
+      # 成果物が無いまま Pages に進んで公開ページが壊れる。
+      # 中身は追跡してある 節別予想.html から作るので、毎回作っても同じ結果になる。
+      - name: 公開ページを作る
+        run: node tools/publish.js
+
+      # auto.js が検算まで通したときだけ、ここに来て差分が残っている。
+      # 落ちていれば auto.js が元に戻して非ゼロで終わるので、この先へ進まない。
+      - name: 変更をコミット
+        id: commit
+        run: |
+          git config user.name  "auto-update[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "変化なし。コミットしない"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git add -A
+          SEASON=$(node -e "process.stdout.write(require('./data/season.json').label)")
+          git commit -m "自動更新: ${SEASON} 時点のデータで作り直した
+
+          Jリーグ公式データサイトの更新を取り込み、パラメータと公開ページを再生成した。
+          検算（tools/verify.js）が全項目通ったものだけをコミットしている。"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # 公開ページは publish/ に生成される（リポジトリでは追跡していない）。
+      # コミットせず、成果物としてそのまま Pages に渡す。
+      - name: 公開ページを成果物にする
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish/site
+
+  # 公開ページの差し替え。update が通ったときだけ動く
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

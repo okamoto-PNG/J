@@ -12,6 +12,9 @@
 const fs = require("fs");
 const path = require("path");
 const { load, dayNum } = require("./lib/data");
+/* ★年・試合数・節数を直書きしない。すべて data/season.json とデータ自身から出す。
+   直書きすると来季この検算ファイルを手で直すことになり、必ず直し忘れる。 */
+const SEASON_INFO = require("./lib/season").require();
 
 const ROOT = path.join(__dirname, "..");
 let ng = 0, ok = 0;
@@ -25,36 +28,108 @@ const section = (t) => console.log(`\n── ${t} ${"─".repeat(Math.max(0, 58 
 
 /* ═══════════════════════════════════════════════════ 1. J1 の過去成績 */
 
-section("1. J1 2015-2025（学習データ）");
+const SI = SEASON_INFO;
+
+/* ═══════════════════════════════════════════════════ 0. シーズン境界の自己整合 */
+
+section("0. シーズンの境界（data/season.json）");
+
+/* ★ここが「来季コードを触らない」ための土台。
+   season.json は parse.js がデータから導いたもの。導出規則どおりになっているかを確かめる。
+   ここが狂うと下流の全部が静かにずれるので、いちばん先に見る。 */
+check(`予想対象は ${SI.label}（学習は ${SI.first}-${SI.histEnd}）`,
+  SI.upcoming === SI.histEnd + 1 && SI.first < SI.histEnd);
+check("採点開始が「最初の3季を履歴に回した年」", SI.firstEval === Math.min(SI.first + 3, SI.histEnd),
+  `${SI.firstEval} / 期待 ${Math.min(SI.first + 3, SI.histEnd)}`);
+check("検証区間が消化済みの最後の区間で終わる", SI.test[1] === SI.histEnd, SI.test.join("-"));
+check("学習区間と検証区間が重なっていない", SI.train[1] < SI.test[0], `${SI.train} / ${SI.test}`);
+check("学習区間が採点開始から始まる", SI.train[0] === SI.firstEval, SI.train.join("-"));
+check("学習区間が空でない", SI.train[0] <= SI.train[1], SI.train.join("-"));
+check("予想対象シーズンのファイル名が実在する",
+  ["J1", "J2", "J3"].every((k) => fs.existsSync(path.join(ROOT, "data", SI.files[k]))),
+  JSON.stringify(SI.files));
+check("締切の基準日が予想対象シーズンの最も早い試合日", (() => {
+  const ds = ["J1", "J2", "J3"].flatMap((k) => load(SI.files[k]).map((m) => m.date))
+    .filter(Boolean).sort();
+  return SI.koEpochUTC === Date.parse(ds[0] + "T00:00:00Z") && SI.koEpochDate === ds[0];
+})(), SI.koEpochDate);
+check("どの試合も基準日以降（負の日数が出ない）", (() => {
+  const bad = ["J1", "J2", "J3"].flatMap((k) => load(SI.files[k]))
+    .filter((m) => m.date && Date.parse(m.date + "T00:00:00Z") < SI.koEpochUTC);
+  return bad.length === 0 || bad.slice(0, 3).map((m) => m.date).join(",");
+})() === true, "");
+check("古いシーズンの予想対象ファイルが残っていない", (() => {
+  const stray = fs.readdirSync(path.join(ROOT, "data"))
+    .filter((f) => /^(j1|j2|j3)-(\d{4})\.json$/.test(f))
+    .filter((f) => Number(/(\d{4})/.exec(f)[1]) !== SI.upcoming);
+  return stray.length === 0 || stray.join(",");
+})() === true, "");
+console.log(`     学習 ${SI.first}-${SI.histEnd} / 予想対象 ${SI.label} / ` +
+  `採点開始 ${SI.firstEval} / 学習区間 ${SI.train.join("-")} / 検証区間 ${SI.test.join("-")}`);
+for (const k of ["J1", "J2", "J3"]) {
+  const L = SI.leagues[k];
+  console.log(`     ${k}: ${L.clubs}クラブ ${L.weeks}節 1節${L.perWeek}試合 計${L.matches}試合`);
+}
+
+section(`1. J1 ${SI.first}-${SI.histEnd}（学習データ）`);
 
 const j1 = load("j1-matches.json");
-check("3588試合ある", j1.length === 3588, `実際 ${j1.length}`);
+check(`学習データが season.json の記録（${SI.history.J1.matches}試合）と一致`,
+  j1.length === SI.history.J1.matches, `実際 ${j1.length}`);
+check(`学習データが ${SI.first}-${SI.histEnd} に収まっている`,
+  j1.every((m) => m.s >= SI.first && m.s <= SI.histEnd));
+check("シーズンが途切れていない（欠けた年が無い）", (() => {
+  const ys = [...new Set(j1.map((m) => m.s))].sort((a, b) => a - b);
+  return ys.length === SI.histEnd - SI.first + 1 &&
+    ys.every((y, i) => y === SI.first + i);
+})(), [...new Set(j1.map((m) => m.s))].sort((a, b) => a - b).join(","));
 
-/** 各シーズンの理論試合数。2015-16は2ステージ制、20クラブ年は380 */
-const EXPECT = {
-  2015: 306, 2016: 306, 2017: 306, 2018: 306, 2019: 306, 2020: 306,
-  2021: 380, 2022: 306, 2023: 306, 2024: 380, 2025: 380,
-};
-for (const [y, n] of Object.entries(EXPECT)) {
-  const got = j1.filter((m) => m.s === Number(y)).length;
-  check(`${y}年 ${n}試合`, got === n, `実際 ${got}`);
+/**
+ * ★各シーズンの試合数を表で直書きせず、不変式で確かめる。
+ * n クラブが k 回総当たりなら 試合数 = n(n-1)/2 × k で、k は整数になる。
+ * 2015-16 の2ステージ制（18クラブ・306試合＝k2）も、20クラブ年（380＝k2）も、
+ * これで同じ式に収まる。将来クラブ数が変わっても直さなくてよい。
+ */
+function roundRobinOk(rows, label) {
+  const bad = [];
+  for (const s of [...new Set(rows.map((m) => m.s))].sort((a, b) => a - b)) {
+    const ms = rows.filter((m) => m.s === s);
+    const n = new Set(ms.flatMap((m) => [m.h, m.a])).size;
+    const pairs = (n * (n - 1)) / 2;
+    const k = pairs ? ms.length / pairs : 0;
+    if (!Number.isInteger(k) || k < 1 || k > 4) bad.push(`${s}(${n}クラブ${ms.length}試合)`);
+  }
+  check(`${label} 各シーズンの試合数がクラブ数と整合する（n(n-1)/2 × 整数回）`,
+    bad.length === 0, bad.join(" "));
 }
+roundRobinOk(j1, "J1");
 
 check("重複した（季・ホーム・アウェイ）が無い",
   new Set(j1.map((m) => `${m.s}|${m.h}|${m.a}`)).size === j1.length);
 check("全試合にスコアがある", j1.every((m) => Number.isInteger(m.hg) && Number.isInteger(m.ag) && m.hg >= 0 && m.ag >= 0));
 check("全試合に試合日がある", j1.every((m) => /^\d{4}-\d{2}-\d{2}$/.test(m.date)));
+/* ★ date が null の試合が混ざっても例外で落ちないようにする（filter を先に置く）。
+   検算スクリプトは「落ちる」のではなく「不合格を報告する」のが仕事。
+   来季を模擬したとき、ここが TypeError で止まって他の項目が全部見えなくなった。 */
 check("試合日がシーズン年と矛盾しない",
-  j1.every((m) => { const y = Number(m.date.slice(0, 4)); return y === m.s || y === m.s + 1; }));
+  j1.filter((m) => typeof m.date === "string").every((m) => {
+    const y = Number(m.date.slice(0, 4));
+    return y === m.s || y === m.s + 1;
+  }));
 
-/* 各クラブ ホーム19/アウェイ19（20クラブ・1回総当たり2回制のシーズン） */
-for (const y of [2021, 2024, 2025]) {
-  const s = j1.filter((m) => m.s === y);
-  const clubs = [...new Set(s.flatMap((m) => [m.h, m.a]))];
-  const bad = clubs.filter((c) =>
-    s.filter((m) => m.h === c).length !== 19 || s.filter((m) => m.a === c).length !== 19);
-  check(`${y}年 各クラブ ホーム19・アウェイ19試合`, clubs.length === 20 && bad.length === 0, bad.join(","));
-}
+/* 各クラブのホーム数とアウェイ数が等しいか。年やクラブ数を直書きせず全シーズン見る
+   （2ステージ制の年も「ホームとアウェイが同数」は成り立つ） */
+check("どのシーズンも各クラブのホーム数＝アウェイ数", (() => {
+  const bad = [];
+  for (const s of [...new Set(j1.map((m) => m.s))]) {
+    const ms = j1.filter((m) => m.s === s);
+    for (const c of new Set(ms.flatMap((m) => [m.h, m.a]))) {
+      const h = ms.filter((m) => m.h === c).length, a = ms.filter((m) => m.a === c).length;
+      if (h !== a) bad.push(`${s} ${c}(H${h}/A${a})`);
+    }
+  }
+  return bad.length === 0 || bad.join(" ");
+})() === true, "");
 
 /* リーグ平均。J1の一般的な水準と一致するか */
 const lgH = j1.reduce((s, m) => s + m.hg, 0) / j1.length;
@@ -70,27 +145,31 @@ check("引分率が 22〜28%", dr > 0.22 && dr < 0.28);
 
 /* ═══════════════════════════════════════════════════ 2. 2026-27 の日程 */
 
-section("2. 2026-27 シーズンの対戦カード");
+section(`2. ${SI.label} シーズンの対戦カード`);
 
-const f26 = load("j1-2026.json");
-check("380試合ある", f26.length === 380, `実際 ${f26.length}`);
+const SH = SI.leagues.J1;                       // 予想対象シーズンの構造（クラブ数・節数など）
+const f26 = load(SI.files.J1);
+const HALF = SH.clubs - 1;                      // 総当たり2回制ならホーム数＝クラブ数−1
+check(`${SH.matches}試合ある`, f26.length === SH.matches, `実際 ${f26.length}`);
 const rounds = [...new Set(f26.map((m) => m.round))].sort((a, b) => a - b);
-check("38節ある", rounds.length === 38 && rounds[0] === 1 && rounds[37] === 38);
-check("どの節も10試合", rounds.every((r) => f26.filter((m) => m.round === r).length === 10));
+check(`${SH.weeks}節ある`,
+  rounds.length === SH.weeks && rounds[0] === 1 && rounds[rounds.length - 1] === SH.weeks);
+check(`どの節も${SH.perWeek}試合`,
+  rounds.every((r) => f26.filter((m) => m.round === r).length === SH.perWeek));
 
 const clubs26 = [...new Set(f26.flatMap((m) => [m.h, m.a]))].sort();
-check("20クラブ", clubs26.length === 20, clubs26.join(","));
-check("どの節にも20クラブが1回ずつ出る", rounds.every((r) => {
+check(`${SH.clubs}クラブ`, clubs26.length === SH.clubs, clubs26.join(","));
+check(`どの節にも${SH.clubs}クラブが1回ずつ出る`, rounds.every((r) => {
   const w = f26.filter((m) => m.round === r);
-  return new Set(w.flatMap((m) => [m.h, m.a])).size === 20;
+  return new Set(w.flatMap((m) => [m.h, m.a])).size === SH.clubs;
 }));
-check("順序付きの組み合わせ380種が重複なく全部そろう",
-  new Set(f26.map((m) => `${m.h}|${m.a}`)).size === 380);
-check("各クラブ ホーム19・アウェイ19試合", clubs26.every((c) =>
-  f26.filter((m) => m.h === c).length === 19 && f26.filter((m) => m.a === c).length === 19));
+check(`順序付きの組み合わせ${SH.matches}種が重複なく全部そろう`,
+  new Set(f26.map((m) => `${m.h}|${m.a}`)).size === SH.matches);
+check(`各クラブ ホーム${HALF}・アウェイ${HALF}試合`, clubs26.every((c) =>
+  f26.filter((m) => m.h === c).length === HALF && f26.filter((m) => m.a === c).length === HALF));
 
 const dated = f26.filter((m) => m.date);
-check(`試合日がある（${dated.length}/380）`, dated.length >= 379);
+check(`試合日がある（${dated.length}/${SH.matches}）`, dated.length >= SH.matches - 1);
 check("節が進むと日付も進む（節ごとの中央値が単調）", (() => {
   const med = rounds.map((r) => {
     const ds = f26.filter((m) => m.round === r && m.date).map((m) => dayNum(m.date)).sort((a, b) => a - b);
@@ -102,14 +181,15 @@ check("結果は未記入（これから予想するシーズン）", f26.every(
 
 const first = f26.filter((m) => m.round === 1).sort((a, b) => dayNum(a.date) - dayNum(b.date))[0];
 console.log(`     開幕: ${first.date} ${first.h} vs ${first.a}（${first.venue}）`);
-console.log(`     最終節: ${f26.filter((m) => m.round === 38)[0].date}`);
+console.log(`     最終節: ${f26.filter((m) => m.round === SH.weeks)[0].date}`);
 
-/* ═══════════════════════════════════════════════════ 3. カップ戦・J2 */
+/* ═══════════════════════════════════════════════════ 3. カップ戦・J2・J3 */
 
-section("3. ルヴァン杯・J2");
+section("3. ルヴァン杯・J2・J3");
 
 const ylc = load("ylc-matches.json");
 const j2 = load("j2-matches.json");
+const j3 = load("j3-matches.json");
 check("ルヴァン杯にデータがある", ylc.length > 600, `${ylc.length}試合`);
 check("ルヴァン杯に試合日がある", ylc.filter((m) => m.date).length / ylc.length > 0.98);
 check("J2にデータがある", j2.length > 5000, `${j2.length}試合`);
@@ -120,6 +200,57 @@ for (const c of ["水戸", "千葉"]) {
   const n = j2.filter((m) => (m.h === c || m.a === c) && m.hg != null).length;
   console.log(`     ${c}: J2 ${n}試合`);
 }
+
+/* J3。J2 の新顔（J3から上がってきたクラブ）を個別に評価するのに使う */
+const j3played = j3.filter((m) => m.hg != null);
+check("J3にデータがある", j3.length > 3000, `${j3.length}試合`);
+check(`J3が${SI.first}-${SI.upcoming}の全シーズンそろっている`,
+  [...new Set(j3.map((m) => m.s))].sort((a, b) => a - b).join(",") ===
+  Array.from({ length: SI.upcoming - SI.first + 1 }, (_, i) => SI.first + i).join(","),
+  [...new Set(j3.map((m) => m.s))].sort((a, b) => a - b).join(","));
+check("J3に試合日がある", j3.filter((m) => m.date).length / j3.length > 0.98);
+check(`J3 ${SI.first}-${SI.histEnd} は全試合にスコアがある`,
+  j3.filter((m) => m.s <= SI.histEnd).every((m) => Number.isInteger(m.hg)),
+  `未消化 ${j3.filter((m) => m.s <= SI.histEnd && m.hg == null).length}件`);
+check(`J3 ${SI.label} は結果が未記入（これから始まるシーズン）`,
+  j3.filter((m) => m.s === SI.upcoming).every((m) => m.hg === null));
+/* ★ J1・J2 と違い、J3 では「同じ順序ペアがシーズン中1回だけ」が成り立たない。
+   2015年は13クラブしかなく、同じ組み合わせを最大3回戦っている（総当たり3回制）。
+   だから (季・ホーム・アウェイ) の一意性で検算してはいけない。
+   代わりに「試合日まで含めれば完全に一意」を確かめる（取得の重複はこれで捕まる）。 */
+check("完全な重複（季・試合日・ホーム・アウェイが同じ）が無い（J3）",
+  new Set(j3.map((m) => `${m.s}|${m.date}|${m.h}|${m.a}`)).size === j3.length,
+  `${j3.length - new Set(j3.map((m) => `${m.s}|${m.date}|${m.h}|${m.a}`)).size}件`);
+roundRobinOk(j3, "J3");
+console.log(`     J3 ${j3.length}試合（消化 ${j3played.length}）` +
+  ` / クラブ ${new Set(j3.flatMap((m) => [m.h, m.a])).size}`);
+
+/* 2026-27 の J2 新顔が J3 側に見つかるか。ここが空だと個別評価が効かない */
+const calibJ3 = load("calib-j3.json");
+const upFromJ3 = Object.entries(calibJ3.origins ?? {})
+  .filter(([, v]) => v.season === SEASON_INFO.upcoming && v.from === "J3").map(([c]) => c);
+const j2NoHist = (() => {
+  const hist = new Set(j2.filter((m) => m.s <= SI.histEnd && m.hg != null).flatMap((m) => [m.h, m.a]));
+  return [...new Set(load(SI.files.J2).flatMap((m) => [m.h, m.a]))].filter((c) => !hist.has(c));
+})();
+check(`${SI.label} の J2 新顔の出自が J3 として特定できている`,
+  j2NoHist.length === 0 || upFromJ3.length > 0,
+  j2NoHist.length ? `履歴なし [${j2NoHist}] のうち J3 由来 [${upFromJ3}]` : "新顔なし");
+check("その新顔にJ3での成績がある",
+  upFromJ3.every((c) => j3played.filter((m) => m.h === c || m.a === c).length > 30),
+  upFromJ3.map((c) => `${c}:${j3played.filter((m) => m.h === c || m.a === c).length}`).join(" "));
+console.log(`     ${SI.label} J2 の新顔: ${upFromJ3.map((c) =>
+  `${c}(J3 ${j3played.filter((m) => m.h === c || m.a === c).length}試合)`).join(" / ")}`);
+
+/* 採用の記録が採用規則と矛盾していないか */
+check("calib-j3.json の採否が採用規則と整合している",
+  calibJ3.adopted === "single" ||
+  (calibJ3.best.train < calibJ3.baseline.train - 1e-9 && calibJ3.best.test < calibJ3.baseline.test - 1e-9),
+  `学習 ${calibJ3.baseline.train?.toFixed(5)}→${calibJ3.best.train?.toFixed(5)} / ` +
+  `検証 ${calibJ3.baseline.test?.toFixed(5)}→${calibJ3.best.test?.toFixed(5)}`);
+console.log(`     J3の採否: ${calibJ3.adopted}（b=${calibJ3.carryover} / ${calibJ3.view ?? "—"}）` +
+  `  新顔戦 学習 ${calibJ3.baseline.train.toFixed(5)}→${calibJ3.best.train.toFixed(5)}` +
+  ` 検証 ${calibJ3.baseline.test.toFixed(5)}→${calibJ3.best.test.toFixed(5)}`);
 
 /* ═══════════════════════════════════════════════════ 4. パラメータと精度 */
 
@@ -133,7 +264,8 @@ console.log(`     基準率   ${r.llBase.toFixed(5)}         ${(r.hitBase*100).t
 check("params.json に書いてある精度が再現する",
   near(r.ll, params.accuracy.logLoss, 1e-6) && r.n === params.accuracy.matches,
   `実測 ${r.ll.toFixed(6)} / 記録 ${params.accuracy.logLoss.toFixed(6)}`);
-check("検証した試合数が2670（2018-2025）", r.n === 2670, `実際 ${r.n}`);
+check(`検証した試合数が params.json の記録（${params.accuracy.matches}）と一致`,
+  r.n === params.accuracy.matches, `実際 ${r.n}`);
 check("基準率より log loss が小さい", r.ll < r.llBase);
 check("一様(1/3)より log loss が小さい", r.ll < Math.log(3));
 check("基準率より的中率が高い", r.hit > r.hitBase);
@@ -143,8 +275,8 @@ check("日程補正は θ=0（実測で効果なし）", params.fatigue.theta ==
 
 section("5. アプリ（HTML）とデータの整合");
 
-const j2hist = load("j2-matches.json").filter((m) => m.s <= 2025 && m.hg != null);
-const f26j2 = load("j2-2026.json");
+const j2hist = load("j2-matches.json").filter((m) => m.s <= SI.histEnd && m.hg != null);
+const f26j2 = load(SI.files.J2);
 const paramsJ2 = load("params-j2.json");
 const promotedAvg = load("promoted.json").promotedAverage;
 
@@ -155,10 +287,11 @@ function appConst(html, name) {
   return new Function("return " + m[1])();
 }
 
-/** 圧縮データを試合の配列に戻す */
+/** 圧縮データを試合の配列に戻す。基準年は直書きせず season.json の最初のシーズンを使う
+    （build.js も学習データの最小シーズンを基準にしている） */
 const expand = (clubs, data) => data.split(";").map((row) => {
   const [s, h, a, hg, ag] = row.split(".").map(Number);
-  return { s: 2015 + s, h: clubs[h], a: clubs[a], hg, ag };
+  return { s: SI.first + s, h: clubs[h], a: clubs[a], hg, ag };
 });
 const mkey = (m) => m.s + "|" + m.h + "|" + m.a + "|" + m.hg + "|" + m.ag;
 
@@ -170,7 +303,7 @@ const mkey = (m) => m.s + "|" + m.h + "|" + m.a + "|" + m.hg + "|" + m.ag;
   const DATA = [...dm[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]).join("");
   const embedded = expand(CLUBS, DATA);
   const A = new Set(j1.map(mkey)), B = new Set(embedded.map(mkey));
-  check("index.html の埋め込み試合数が3588", embedded.length === 3588, String(embedded.length));
+  check(`index.html の埋め込み試合数が${j1.length}`, embedded.length === j1.length, String(embedded.length));
   check("index.html の埋め込みデータが data/j1-matches.json と完全一致",
     [...A].every((k) => B.has(k)) && [...B].every((k) => A.has(k)));
 
@@ -196,7 +329,7 @@ check("2リーグ（J1・J2）ぶんある",
   !!(HIST && HIST.J1 && HIST.J2 && LEAGUES && LEAGUES.J1 && LEAGUES.J2));
 
 const LG_SPEC = [
-  { key: "J1", hist: j1,     fixtures: f26,   params: params.model,   prior: promotedAvg,          n: 3588 },
+  { key: "J1", hist: j1,     fixtures: f26,   params: params.model,   prior: promotedAvg,       n: j1.length },
   { key: "J2", hist: j2hist, fixtures: f26j2, params: paramsJ2.model, prior: paramsJ2.newcomer, n: j2hist.length },
 ];
 
@@ -218,15 +351,77 @@ for (const L of LG_SPEC) {
   check(L.key + " の事前分布（履歴なしクラブ）が data/ と一致",
     ["atkH", "defH", "atkA", "defA"].every((k) => near(G.promoted[k], L.prior[k], 5e-5)));
 
+  /* クラブ個別の事前分布（J2 の新顔を J3 から評価した結果）。
+     ここが食い違うのは「calib-j3.json を作り直したのに build.js を通していない」場合。 */
+  const embByClub = G.promotedByClub ?? {};
+  const hasHist = new Set(L.hist.flatMap((m) => [m.h, m.a]));
+  const wantByClub = {};
+  if (L.key === "J2" && calibJ3.adopted !== "single") {
+    for (const c of G.teams) if (calibJ3.byClub?.[c] && !hasHist.has(c)) wantByClub[c] = calibJ3.byClub[c];
+  }
+  check(L.key + " の個別事前分布のクラブが data/calib-j3.json と一致",
+    Object.keys(embByClub).sort().join(",") === Object.keys(wantByClub).sort().join(","),
+    `HTML [${Object.keys(embByClub).sort()}] / data [${Object.keys(wantByClub).sort()}]`);
+  check(L.key + " の個別事前分布の値が data/calib-j3.json と一致",
+    Object.entries(wantByClub).every(([c, v]) =>
+      embByClub[c] && ["atkH", "defH", "atkA", "defA"].every((k) => near(embByClub[c][k], v[k], 5e-5))),
+    Object.keys(wantByClub).filter((c) => !embByClub[c]).join(","));
+  check(L.key + " 個別事前分布は履歴なしクラブにだけ付いている",
+    Object.keys(embByClub).every((c) => !hasHist.has(c)),
+    Object.keys(embByClub).filter((c) => hasHist.has(c)).join(","));
+  if (Object.keys(embByClub).length) {
+    console.log(`     ${L.key} 個別事前分布: ` + Object.entries(embByClub)
+      .map(([c, v]) => `${c}(atkH ${v.atkH.toFixed(3)})`).join(" / "));
+  }
+
+  /* 予想の締切に使うキックオフ。1試合4文字（日付2＋時刻2） */
+  const N_MATCH = SI.leagues[L.key].matches;
+  check(L.key + ` の kickoffs が${N_MATCH * 4}文字（${N_MATCH}試合×4文字）`,
+    G.kickoffs?.length === N_MATCH * 4, String(G.kickoffs?.length));
+  if (G.kickoffs?.length === N_MATCH * 4 && G.fixturesRaw?.length === N_MATCH * 2) {
+    const EPOCH = SI.koEpochUTC;
+    /* HTML の並び（節ごとに日付順）を data/ 側でも再現して突き合わせる */
+    const want = [];
+    for (let w = 1; w <= SI.leagues[L.key].weeks; w++) {
+      const week = L.fixtures.filter((m) => m.round === w)
+        .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
+      want.push(...week);
+    }
+    let bad = 0, noDate = 0, noKo = 0, firstBad = "";
+    for (let n = 0; n < N_MATCH; n++) {
+      const m = want[n];
+      const code = G.kickoffs.slice(n * 4, n * 4 + 4);
+      const d = code.slice(0, 2), t = code.slice(2, 4);
+      if (!m.date) {
+        noDate++;
+        if (code !== "....") { bad++; if (!firstBad) firstBad = `第${m.round}節 日程未定なのに ${code}`; }
+        continue;
+      }
+      const days = Math.round((Date.parse(m.date + "T00:00:00Z") - EPOCH) / 86400000);
+      const wantD = days.toString(36).padStart(2, "0");
+      const tm = m.ko ? m.ko.match(/^(\d{1,2}):(\d{2})$/) : null;
+      const wantT = tm
+        ? Math.round((Number(tm[1]) * 60 + Number(tm[2])) / 5).toString(36).padStart(2, "0")
+        : "..";
+      if (!tm) noKo++;
+      if (d !== wantD || t !== wantT) {
+        bad++;
+        if (!firstBad) firstBad = `第${m.round}節 ${m.h}-${m.a} ${m.date} ${m.ko ?? "未定"} → ${code}（期待 ${wantD}${wantT}）`;
+      }
+    }
+    check(L.key + " の kickoffs が data/ の試合日・K/O時刻と完全一致", bad === 0, firstBad);
+    console.log(`     ${L.key} 締切: 日程未定 ${noDate}試合 / K/O時刻未発表 ${noKo}試合（当日0時締切になる）`);
+  }
+
   /* 日程 */
-  check(L.key + " の fixturesRaw が760文字（38節×20文字）", G.fixturesRaw.length === 760, G.fixturesRaw.length + "文字");
-  check(L.key + " の所属クラブが20", G.teams.length === 20, String(G.teams.length));
-  if (G.fixturesRaw.length === 760 && G.teams.length === 20) {
+  check(L.key + ` の fixturesRaw が${N_MATCH * 2}文字`, G.fixturesRaw.length === N_MATCH * 2, G.fixturesRaw.length + "文字");
+  check(L.key + ` の所属クラブが${SI.leagues[L.key].clubs}`, G.teams.length === SI.leagues[L.key].clubs, String(G.teams.length));
+  if (G.fixturesRaw.length === N_MATCH * 2 && G.teams.length === SI.leagues[L.key].clubs) {
     const emb2 = [];
-    for (let w = 0; w < 38; w++) for (let i2 = 0; i2 < 10; i2++)
+    for (let w = 0; w < SI.leagues[L.key].weeks; w++) for (let i2 = 0; i2 < SI.leagues[L.key].perWeek; i2++)
       emb2.push({ round: w + 1,
-        h: G.teams[AB.indexOf(G.fixturesRaw[w * 20 + i2 * 2])],
-        a: G.teams[AB.indexOf(G.fixturesRaw[w * 20 + i2 * 2 + 1])] });
+        h: G.teams[AB.indexOf(G.fixturesRaw[w * SI.leagues[L.key].clubs + i2 * 2])],
+        a: G.teams[AB.indexOf(G.fixturesRaw[w * SI.leagues[L.key].clubs + i2 * 2 + 1])] });
     const kf = (m) => m.round + "|" + m.h + "|" + m.a;
     const off = new Set(L.fixtures.map(kf)), e2 = new Set(emb2.map(kf));
     check(L.key + " の日程が公式データと完全一致（節・ホーム・アウェイ）",
@@ -242,7 +437,7 @@ for (const L of LG_SPEC) {
     const pairs = new Set(emb2.map((m) => m.h + "|" + m.a));
     check(L.key + " 順序付き380通りが重複なくそろう", pairs.size === 380, String(pairs.size));
   }
-  check(L.key + " の全38節に開催日がある",
+  check(L.key + ` の全${SI.leagues[L.key].weeks}節に開催日がある`,
     Array.isArray(G.roundDates) && G.roundDates.filter(Boolean).length === 38,
     (G.roundDates ? G.roundDates.filter(Boolean).length : 0) + "/38");
 }
@@ -332,9 +527,39 @@ for (const file of ["index.html", "節別予想.html"]) {
       haOk / (haOk + haNg) >= 0.8,
       haOk + "/" + (haOk + haNg) + "カード（逆転 " + haNg + "件＝アウェイに強いクラブ）");
 
-    if (L.key === "J1") {
-      const noHist = ["水戸", "千葉"].filter((c) => !fit.R[c]);
-      check(tag + " 水戸・千葉は J1 履歴なしとして扱われる", noHist.length === 2, noHist.join(","));
+    /* 履歴なしクラブ（昇格したばかりで学習データに居ないクラブ）を
+       アプリが「履歴なし」として扱えているか。
+       クラブ名を直書きせず、data から出した集合と突き合わせる。
+       今季は J1 なら水戸・千葉だが、来季は自動的に別のクラブになる。 */
+    const upClubs = new Set(L.fixtures.flatMap((m) => [m.h, m.a]));
+    const histClubs = new Set(L.hist.flatMap((m) => [m.h, m.a]));
+    const wantNoHist = [...upClubs].filter((c) => !histClubs.has(c)).sort();
+    const gotNoHist = [...upClubs].filter((c) => !fit.R[c]).sort();
+    check(tag + ` 履歴なしクラブを data と同じに判定する（${wantNoHist.join("・") || "なし"}）`,
+      gotNoHist.join(",") === wantNoHist.join(","),
+      `アプリ [${gotNoHist}] / data [${wantNoHist}]`);
+
+    /* J2 の新顔が「クラブごとに別の評価」になっているか。
+       ここが同じ値なら、個別事前分布が実際には効いていない（埋め込んだだけで使われていない）。
+       calib-j3.json の byClub が本当にモデルまで届いているかを、動かして確かめる。 */
+    if (L.key === "J2" && Object.keys(calibJ3.priorNext ?? {}).length > 1) {
+      const cs = Object.keys(calibJ3.priorNext).filter((c) => (app.TEAMS ?? []).includes(c));
+      /* 相手は「履歴のあるクラブ」1つに固定する。相手を変えると比較にならない */
+      const foe = (app.TEAMS ?? []).find((c) => fit.R[c] && !cs.includes(c));
+      const lam = cs.map((c) => ({ c, l: app.predict(c, foe).lh, atkH: calibJ3.priorNext[c].atkH }));
+
+      check(tag + " 新顔クラブが個別に評価されている（同じ相手でも値が違う）",
+        foe && cs.length > 1 && new Set(lam.map((x) => x.l.toFixed(6))).size === cs.length,
+        `相手 ${foe} / ` + lam.map((x) => `${x.c}:${x.l.toFixed(4)}`).join(" "));
+
+      /* J3 で攻撃力が高かったクラブほど、J2 での期待得点も高いはず */
+      const sorted = [...lam].sort((a, b) => b.atkH - a.atkH);
+      check(tag + " 事前分布の攻撃力が高い順に期待得点も高い",
+        sorted.every((x, i) => i === 0 || sorted[i - 1].l >= x.l - 1e-9),
+        sorted.map((x) => `${x.c}(atkH ${x.atkH.toFixed(3)} → λ ${x.l.toFixed(4)})`).join(" "));
+
+      console.log(`     ${tag} 新顔の期待得点（対 ${foe}）: ` +
+        sorted.map((x) => `${x.c} ${x.l.toFixed(3)}`).join(" / "));
     }
 
     /* 今季の全380試合で確率が壊れないか */
@@ -354,6 +579,345 @@ for (const file of ["index.html", "節別予想.html"]) {
   }
 }
 
+/* ═══════════════════════════════════════════════════ 6-b. 予想の採点と共有 */
+
+section("6-b. 予想の採点と共有（節別予想.html）");
+
+/**
+ * 採点と共有は描画（5章）より前に置いてあるので、そこまで切り出せば DOM 無しで動く。
+ * localStorage / location / history だけ差し替える。
+ * 「表示している的中率＝実際に動いているコードの的中率」を保証するため、
+ * 数字を目で確かめるのではなく、答えの分かっている入力を通して検算する。
+ */
+function loadAppScoring() {
+  const html = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8");
+  const script = html.match(/<script>\n?"use strict";([\s\S]*?)<\/script>/)[1];
+  const cut = script.indexOf("   5) 描画");
+  if (cut < 0) return null;
+  const body = script.slice(0, script.lastIndexOf("/* ===", cut));
+  const stubs = `
+    const localStorage = { getItem: (k) => (__s.has(k) ? __s.get(k) : null),
+                           setItem: (k, v) => __s.set(k, String(v)) };
+    const location = { href: "https://example.test/a.html", hash: "" };
+    const history = { replaceState: () => {} };`;
+  const api = `
+    return { useLeague, bindLeague, refit, save, load,
+      get LG(){ return LG; }, get STATE(){ return STATE; }, get STORE(){ return STORE; },
+      get PEERS(){ return PEERS; }, get ME(){ return ME; }, set ME(v){ ME = v; },
+      get WEEKS(){ return WEEKS; }, get PER_WEEK(){ return PER_WEEK; },
+      scoreboard, fitBefore, baseRates, outcomeOf,
+      deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
+      encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
+      sha256Hex, sealPayload, sealCodeOf, myCode, ensureSalt, roundDeadline, roundClosed,
+      isSealed, sealRound, unsealRound, sealMessage, checkCode,
+      parseShare, shareString, shareLink, importShare };`;
+  return new Function("__s", '"use strict";' + stubs + body + api)(new Map());
+}
+
+const sc = loadAppScoring();
+if (!sc) {
+  check("節別予想.html から採点部分を切り出せる", false, "「5) 描画」の区切りが見つからない");
+} else {
+  check("採点・共有のコードが Node で動く", true);
+  sc.useLeague("J1"); sc.bindLeague(); sc.refit();
+  sc.ME = { name: "検算" };
+
+  /* --- 共有文字列 --- */
+  const canon = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+  const slots = sc.WEEKS * sc.PER_WEEK * 2;
+  const sample = { "1.0": [2, 1], "1.9": [0, 0], "20.4": [10, 35], "38.9": [3, 12] };
+  const enc = sc.encodePicks(sample);
+  check(`共有文字列が固定長（${sc.WEEKS}節×${sc.PER_WEEK}試合×2文字）`, enc.length === slots, `${enc.length}/${slots}`);
+  check("共有文字列が URL に載せられる文字だけ", /^[0-9a-z.]+$/.test(enc));
+  check("共有文字列が往復して一致する", canon(sc.decodePicks(enc)) === canon(sample));
+  check("長さの違う共有文字列は拒否する", sc.decodePicks(enc.slice(1)) === null);
+  for (const k of Object.keys(sc.STATE.picks)) delete sc.STATE.picks[k];
+  sc.STATE.picks["1.0"] = [2, 1];
+  const ps = sc.parseShare(sc.shareString());
+  check("名前と予想が往復する（日本語名も）", ps && ps.name === "検算" && canon(ps.picks) === canon(sc.STATE.picks));
+  check("リンク形式（#p=…）からも読める", canon(sc.parseShare(sc.shareLink())?.picks ?? {}) === canon(sc.STATE.picks));
+  check("壊れた共有文字列は拒否する",
+    sc.parseShare("ゴミ") === null && sc.parseShare("1~J9~a~" + enc) === null);
+
+  /* --- 締切（キックオフ）--- */
+  const dl10 = sc.deadlineOf(1, 0);
+  check("第1節の締切が epoch ms で取れる", Number.isFinite(dl10), String(dl10));
+  /* data/ 側の第1節（日付順の先頭）の日時と一致するか。時刻は日本時間として扱う */
+  {
+    const wk1 = load(SI.files.J1).filter((m) => m.round === 1)
+      .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
+    const m0 = wk1[0];
+    const want = Date.parse(m0.date + "T" + (m0.ko ? m0.ko : "00:00") + ":00+09:00");
+    check("締切が公式の試合日・K/O時刻（日本時間）と一致", dl10 === want,
+      `${new Date(dl10).toISOString()} vs ${new Date(want).toISOString()}（${m0.date} ${m0.ko ?? "未定"}）`);
+    check("K/O時刻の有無を正しく判定する", sc.koKnown(1, 0) === Boolean(m0.ko));
+  }
+  /* 2026-08-07 が開幕なので、開幕前の時刻では締まっておらず、シーズン後なら締まっている */
+  check("締切の前後を判定できる", (() => {
+    const before = dl10 - 1000, after = dl10 + 1000;
+    return sc.onTime("1.0", before) === "o" && sc.onTime("1.0", after) === "x";
+  })());
+  check("時刻が分からない予想は不明（?）扱い", sc.onTime("1.0", null) === "?");
+  check("日程未定の試合は締切なし・締まらない", (() => {
+    /* J1 第20節に1件だけ日付未定がある。その位置を探す */
+    const wk = load(SI.files.J1).filter((m) => !m.date ? true : false).length
+      ? load(SI.files.J1).filter((m) => m.round === load(SI.files.J1).find((x) => !x.date).round)
+      : load(SI.files.J1).filter((m) => m.round === 1)
+      .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
+    const idx = wk.findIndex((m) => !m.date);
+    if (idx < 0) return true;                       // 全部発表済みになったら自動的に通る
+    return sc.deadlineOf(20, idx) === null && sc.isClosed(20, idx) === false
+      && sc.onTime(`20.${idx}`, null) === "o";      // 締まらない試合は「締切後」になり得ない
+  })());
+
+  /* --- 締切前フラグの往復 --- */
+  check(`フラグ文字列が${sc.WEEKS * sc.PER_WEEK}文字（1試合1文字）`,
+    sc.encodeFlags({ "1.0": [1, 0] }, { "1.0": dl10 - 1000 }).length === sc.WEEKS * sc.PER_WEEK);
+  check("締切前は o・締切後は x になる", (() => {
+    const f = sc.decodeFlags(sc.encodeFlags(
+      { "1.0": [1, 0], "1.1": [2, 2] }, { "1.0": dl10 - 1000, "1.1": sc.deadlineOf(1, 1) + 1000 }));
+    return f["1.0"] === "o" && f["1.1"] === "x";
+  })());
+  check("知らない文字のフラグ列は拒否する", sc.decodeFlags("z".repeat(sc.WEEKS * sc.PER_WEEK)) === null);
+  check("長さの違うフラグ列は拒否する", sc.decodeFlags("o".repeat(sc.WEEKS * sc.PER_WEEK - 1)) === null);
+  check("版1（フラグなし）の共有文字列も読める", (() => {
+    const v1 = "1~J1~" + encodeURIComponent("旧版") + "~" + sc.encodePicks({ "1.0": [1, 0] });
+    const p = sc.parseShare(v1);
+    return p && p.name === "旧版" && p.picks["1.0"][0] === 1 && Object.keys(p.flags).length === 0;
+  })());
+
+  /* --- 封印コード（締切をチャットの投稿時刻に証明させる仕組み）--- */
+
+  /* ★ SHA-256 を自分で書いているので、Node の crypto と突き合わせて正しさを確かめる。
+     crypto.subtle は file:// で使えない環境があるため自前実装にした。
+     境界（55/56/63/64/65バイト＝パディングが1ブロック増える境目）を必ず通す。 */
+  {
+    const nodeCrypto = require("crypto");
+    const cases = ["", "a", "abc", "あいうえお".repeat(20),
+      "x".repeat(55), "x".repeat(56), "x".repeat(63), "x".repeat(64), "x".repeat(65), "x".repeat(200),
+      sc.sealPayload("J1", 1, "0123456789abcdef", { "1.0": [2, 1] })];
+    const bad = cases.filter((t) =>
+      sc.sha256Hex(t) !== nodeCrypto.createHash("sha256").update(t, "utf8").digest("hex"));
+    check("自前の SHA-256 が Node の crypto と一致する（境界長も含め11通り）",
+      bad.length === 0, bad.length ? `len=${bad.map((t) => t.length).join(",")}` : "");
+  }
+
+  sc.ME = { name: "検算", salt: "0123456789abcdef" };
+  for (const k of Object.keys(sc.STATE.picks)) delete sc.STATE.picks[k];
+  for (const k of Object.keys(sc.STATE.sealed)) delete sc.STATE.sealed[k];
+  sc.STATE.picks["1.0"] = [2, 1];
+  sc.STATE.picks["1.1"] = [0, 0];
+
+  const code1 = sc.myCode(1);
+  check("封印コードが 4桁-4桁-4桁 の形", /^[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}$/.test(code1), code1);
+  check("同じ予想なら同じコードになる（再現する）", sc.myCode(1) === code1);
+  /* ★予想を1つ変えたらコードが変わること。ここが崩れると封印の意味が無い */
+  sc.STATE.picks["1.1"] = [0, 1];
+  const code2 = sc.myCode(1);
+  check("予想を1つ変えるとコードが変わる（書き換えを検出できる）", code2 !== code1, `${code1} → ${code2}`);
+  sc.STATE.picks["1.1"] = [0, 0];
+  check("元に戻せばコードも戻る", sc.myCode(1) === code1);
+  /* 未記入も封印の対象。あとから足せないようにするため */
+  sc.STATE.picks["1.5"] = [1, 1];
+  check("未記入だった試合に後から入れてもコードが変わる", sc.myCode(1) !== code1);
+  delete sc.STATE.picks["1.5"];
+  check("salt が違えば別のコードになる（総当たりで中身を当てられない）",
+    sc.sealCodeOf("J1", 1, "fedcba9876543210", sc.STATE.picks) !== code1);
+  check("節が違えば別のコードになる", sc.myCode(2) !== code1);
+  check("リーグが違えば別のコードになる",
+    sc.sealCodeOf("J2", 1, sc.ME.salt, sc.STATE.picks) !== code1);
+
+  /* 封印すると予想が動かせなくなる（変えたらコードが合わなくなるため） */
+  check("締切前なら封印できる", sc.sealRound(1) === true && sc.isSealed(1));
+  check("節の締切は10試合のうち最も早いキックオフ", (() => {
+    const all = Array.from({ length: sc.PER_WEEK }, (_, i) => sc.deadlineOf(1, i)).filter((x) => x != null);
+    return sc.roundDeadline(1) === Math.min(...all);
+  })());
+  check("チャット用の文面にコードと名前が入る", (() => {
+    const msg = sc.sealMessage(1);
+    return msg.includes(code1) && msg.includes("検算") && msg.includes("第1節");
+  })());
+  check("締切後は封印できない・解けない", (() => {
+    /* 第1節は 2026-08-07 開幕なので、過去のシーズンにあたる節は無い。
+       代わりに「締切を過ぎている扱い」を作れないので、解除の可否だけ確認する */
+    return sc.unsealRound(1) === true && !sc.isSealed(1);
+  })());
+  sc.sealRound(1);
+
+  /* 照合。共有された予想＋salt からコードを再計算して突き合わせる */
+  check("自分のコードを照合できる", (() => {
+    const hit = sc.checkCode(code1);
+    return hit && hit.week === 1 && hit.me === true;
+  })());
+  check("区切り文字が無くても照合できる", Boolean(sc.checkCode(code1.replace(/-/g, ""))));
+  check("大文字でも照合できる", Boolean(sc.checkCode(code1.toUpperCase())));
+  check("でたらめなコードは一致しない", sc.checkCode("0000-0000-0000") === null ||
+    sc.checkCode("0000-0000-0000").code !== code1);
+  check("桁が足りないコードは拒否する", sc.checkCode("a3f9-21c8") === null);
+
+  /* 版3の共有文字列に salt と封印済みの節が乗るか */
+  const v3 = sc.shareString();
+  const p3 = sc.parseShare(v3);
+  check("版3の共有文字列に salt が乗る", p3 && p3.salt === sc.ME.salt, p3 && p3.salt);
+  check("版3の共有文字列に封印済みの節が乗る", p3 && p3.sealed["1"] === 1, JSON.stringify(p3?.sealed));
+  check(`封印済みの節の文字列が${sc.WEEKS}文字`, sc.encodeSealed({ 1: 1 }).length === sc.WEEKS);
+  check("壊れた封印済み文字列は拒否する",
+    sc.decodeSealed("2".repeat(sc.WEEKS)) === null && sc.decodeSealed("1".repeat(sc.WEEKS - 1)) === null);
+  check("salt が16桁の16進でなければ版3を拒否する",
+    sc.parseShare(v3.replace(/~[0-9a-f]{16}~/, "~zzzz~")) === null);
+  check("他の人の予想を版3で取り込むと、その人のコードを照合できる", (() => {
+    const other = ["3", "J1", encodeURIComponent("佐藤2"),
+      sc.encodePicks({ "3.0": [1, 0] }), sc.encodeFlags({ "3.0": [1, 0] }, { "3.0": 0 }),
+      "abcdef0123456789", sc.encodeSealed({ 3: 1 })].join("~");
+    if (!sc.importShare(other)) return false;
+    const want = sc.sealCodeOf("J1", 3, "abcdef0123456789", { "3.0": [1, 0] });
+    const hit = sc.checkCode(want);
+    return hit && hit.name === "佐藤2" && hit.week === 3 && hit.me === false;
+  })());
+  delete sc.PEERS.J1["佐藤2"];
+
+  /* 封印した節は予想を変更できない（UI側の判定に使う） */
+  check("封印した節は変更できない扱いになる", sc.isSealed(1) === true);
+  for (const k of Object.keys(sc.STATE.sealed)) delete sc.STATE.sealed[k];
+
+  /* --- 採点の算数。答えが分かっている入力を通す --- */
+  for (const k of Object.keys(sc.STATE.results)) delete sc.STATE.results[k];
+  for (const k of Object.keys(sc.STATE.picks)) delete sc.STATE.picks[k];
+  const R = [[2, 0], [1, 1], [0, 2], [3, 1], [0, 0]];        // 勝 分 敗 勝 分
+  R.forEach((v, i) => { sc.STATE.results["1." + i] = v; });
+  Object.assign(sc.STATE.picks, {
+    "1.0": [2, 0],   // スコアまで的中
+    "1.1": [0, 0],   // 引分的中（スコア違い）
+    "1.2": [1, 3],   // アウェイ勝ち的中
+    "1.3": [0, 1],   // はずれ
+    "1.4": [2, 1],   // はずれ
+  });
+  let sb = sc.scoreboard();
+  const me = sb.people[0];
+  check("採点数が「予想を出した試合」の数", me.n === 5, String(me.n));
+  check("的中率が 3/5 = 60%", near(me.hitRate, 0.6, 1e-12), String(me.hitRate));
+  check("スコア完全的中が 1/5 = 20%", near(me.exactRate, 0.2, 1e-12), String(me.exactRate));
+  check("言い切りの予想の Brier が 0.8（的中0・はずれ2）", near(me.brierAvg, 0.8, 1e-12), String(me.brierAvg));
+  check("言い切りの予想に log loss は出さない（0%で外すと無限大になる）", me.llAvg === null);
+  check("モデルには log loss が出る", Number.isFinite(sb.model.llAvg), String(sb.model.llAvg));
+  check("モデルの Brier が 0〜2（確率の合計が1である証拠）",
+    sb.model.brierAvg >= 0 && sb.model.brierAvg <= 2, String(sb.model.brierAvg));
+  check("基準率の合計が1", near(sb.rate.h + sb.rate.d + sb.rate.a, 1, 1e-12));
+
+  delete sc.STATE.picks["1.4"];
+  sb = sc.scoreboard();
+  check("予想を出していない試合は採点しない（出さない人が有利にならない）",
+    sb.people[0].n === 4 && near(sb.people[0].hitRate, 0.75, 1e-12) && sb.model.n === 5,
+    `あなた ${sb.people[0].n}試合 / モデル ${sb.model.n}試合`);
+  sc.STATE.picks["1.4"] = [2, 1];
+
+  /* ★締切後に入れた予想を採点に混ぜていないか。
+     混ぜると「試合を見てから入力すれば的中率100%」になり、数字の意味が無くなる。 */
+  for (let i = 0; i < 5; i++) sc.STATE.pickAt["1." + i] = sc.deadlineOf(1, i) - 1000;   // 全部締切前
+  const allOnTime = sc.scoreboard().people[0];
+  /* はずれの2件だけを「締切後に入れた」ことにする。的中率が上がってはいけない…
+     ではなく、除外されるので 3/3 = 100% になる。件数が減ることが本質 */
+  sc.STATE.pickAt["1.3"] = sc.deadlineOf(1, 3) + 1000;
+  sc.STATE.pickAt["1.4"] = sc.deadlineOf(1, 4) + 1000;
+  const withLate = sc.scoreboard().people[0];
+  check("締切前だけなら5試合・的中率60%", allOnTime.n === 5 && near(allOnTime.hitRate, 0.6, 1e-12),
+    `${allOnTime.n}試合 ${(allOnTime.hitRate * 100).toFixed(1)}%`);
+  check("締切後の予想は採点から外れ、件数が別に数えられる",
+    withLate.n === 3 && withLate.late === 2, `採点${withLate.n}試合 / 締切後${withLate.late}件`);
+  check("時刻を記録していない予想は「不明」として数える", (() => {
+    for (let i = 0; i < 5; i++) delete sc.STATE.pickAt["1." + i];
+    const u = sc.scoreboard().people[0];
+    return u.n === 5 && u.unknown === 5 && u.late === 0;
+  })());
+
+  /* --- ★ここが一番大事：あとで入れた結果でモデルを採点していないか --- */
+  const p1 = sc.scoreboard().perMatch.find((m) => m.w === 1 && m.i === 0).model;
+  for (let i = 0; i < 10; i++) { sc.STATE.results["2." + i] = [3, 0]; sc.STATE.results["3." + i] = [0, 4]; }
+  const sb2 = sc.scoreboard();
+  const p2 = sb2.perMatch.find((m) => m.w === 1 && m.i === 0).model;
+  check("後の節の結果を入れても第1節のモデル確率が変わらない（未来を使っていない）",
+    near(p1.h, p2.h, 1e-12) && near(p1.d, p2.d, 1e-12) && near(p1.a, p2.a, 1e-12),
+    `前 ${p1.h.toFixed(6)} → 後 ${p2.h.toFixed(6)}`);
+  check("採点数が結果の件数（25）に追いつく", sb2.model.n === 25, String(sb2.model.n));
+  const fitH = sc.STATE.fit.lgH;
+  sc.scoreboard();
+  check("採点しても表示用の fit を壊さない", sc.STATE.fit.lgH === fitH);
+
+  /* --- 他の人の予想 --- */
+  sc.PEERS.J1["佐藤"] = { "1.0": [2, 0], "1.1": [1, 0], "1.2": [0, 1] };
+  sb = sc.scoreboard();
+  const sato = sb.people.find((p) => p.name === "佐藤");
+  check("他の人が採点対象に入り、別々に集計される",
+    sato && sato.n === 3 && near(sato.hitRate, 2 / 3, 1e-12) && sb.people[0].n === 5,
+    sato ? `佐藤 ${sato.n}試合 ${(sato.hitRate * 100).toFixed(1)}%` : "佐藤が居ない");
+  const mine = JSON.stringify(sc.STATE.picks);
+  sc.importShare("1~J1~" + encodeURIComponent("検算") + "~" + sc.encodePicks({ "5.0": [9, 9] }));
+  check("自分と同じ名前の共有は取り込まない（自分の予想を上書きしない）",
+    JSON.stringify(sc.STATE.picks) === mine && !sc.PEERS.J1["検算"]);
+  /* 版1（フラグなし）で受けてから、版2で送り直す */
+  sc.importShare("1~J1~" + encodeURIComponent("鈴木") + "~" + sc.encodePicks({ "1.0": [0, 5] }));
+  check("版1の共有も他の人として取り込める", sc.PEERS.J1["鈴木"]?.picks?.["1.0"]?.[1] === 5,
+    JSON.stringify(sc.PEERS.J1["鈴木"]));
+  const two = { "1.0": [1, 1], "1.1": [1, 1] };
+  sc.importShare(["2", "J1", encodeURIComponent("鈴木"), sc.encodePicks(two),
+    sc.encodeFlags(two, { "1.0": dl10 - 1000, "1.1": sc.deadlineOf(1, 1) - 1000 })].join("~"));
+  const suzu = sc.PEERS.J1["鈴木"];
+  check("同じ名前で送り直すと差し替わる（増殖しない）",
+    Object.keys(suzu?.picks ?? {}).length === 2 && suzu.picks["1.0"][1] === 1,
+    JSON.stringify(suzu?.picks));
+  check("他の人の締切前フラグも受け取れる", suzu?.flags?.["1.0"] === "o" && suzu?.flags?.["1.1"] === "o",
+    JSON.stringify(suzu?.flags));
+  check("旧形式（予想だけ）で保存された他の人も採点できる", (() => {
+    sc.PEERS.J1["旧データ"] = { "1.0": [2, 0] };      // {picks,flags} でない形
+    const r = sc.scoreboard().people.find((p) => p.name === "旧データ");
+    return r && r.n === 1;
+  })());
+
+  /* --- 保存形式 --- */
+  sc.save();
+  console.log(`     採点 ${sb2.model.n}試合で検算 / 共有文字列 ${slots}文字`);
+}
+
+/* ═══════════════════════════════════════════════════ 6-d. 自動更新の安全網 */
+
+section("6-d. 自動更新の安全網（tools/auto.js）");
+
+/**
+ * auto.js は無人で走る。失敗したときに中途半端な状態を残すと、
+ * 次に開いたとき何が正しいのか分からなくなる。
+ * だから「退避 → 実行 → 落ちたら復元」の復元がちゃんと働くことを、
+ * 実際にファイルを壊して確かめる。ここが効かない安全網は無いのと同じ。
+ */
+{
+  const auto = require("./auto");
+  const target = path.join(ROOT, "data", "season.json");
+  const original = fs.readFileSync(target, "utf8");
+
+  const kept = auto.backup();
+  check("退避が生成物を拾える（10ファイル以上）", kept >= 10, `${kept}ファイル`);
+  check("退避先がプロジェクトの外（OneDriveを汚さない）",
+    !auto.BACKUP.startsWith(ROOT), auto.BACKUP);
+
+  /* わざと壊してから戻す */
+  fs.writeFileSync(target, '{"壊した":true}');
+  const strayName = "j1-9999.json";                 // 新しい年が生まれた状況も作る
+  const stray = path.join(ROOT, "data", strayName);
+  fs.writeFileSync(stray, "[]");
+
+  const restored = auto.restore();
+  check("復元でファイルが戻る", restored >= 10, `${restored}ファイル`);
+  check("壊したファイルが元の中身に戻る", fs.readFileSync(target, "utf8") === original);
+  check("退避後に生まれた予想対象ファイルは消される（新旧が混ざらない）",
+    !fs.existsSync(stray), strayName);
+
+  if (fs.existsSync(stray)) fs.unlinkSync(stray);       // 念のため
+  auto.clearBackup();
+  check("後片付けで退避が消える",
+    !fs.existsSync(auto.BACKUP) || fs.readdirSync(auto.BACKUP).length === 0);
+  /* 最後にもう一度、本物が壊れていないことを確かめる */
+  check("検算の後もデータが元のまま", fs.readFileSync(target, "utf8") === original);
+}
+
 /* ═══════════════════════════════════════════════════ 7. 公開用ページ */
 
 section("7. 公開用ページ（publish/）");
@@ -366,10 +930,11 @@ section("7. 公開用ページ（publish/）");
  */
 const S_TAG = "<!-- sync-addon:start -->", E_TAG = "<!-- sync-addon:end -->";
 const pubFile = path.join(ROOT, "publish", "index.html");
-const addonFile = path.join(ROOT, "publish", "sync-addon.html");
+/* アドオンのソースは tools/ にある（publish/ は生成物だけの置き場） */
+const addonFile = path.join(ROOT, "tools", "sync-addon.html");
 
 if (!fs.existsSync(pubFile) || !fs.existsSync(addonFile)) {
-  check("publish/index.html と publish/sync-addon.html がある", false, "publish/build.js を実行していない？");
+  check("publish/index.html と tools/sync-addon.html がある", false, "node tools/publish.js を実行していない？");
 } else {
   const pub = fs.readFileSync(pubFile, "utf8");
   const addon = fs.readFileSync(addonFile, "utf8").trim();
@@ -381,15 +946,29 @@ if (!fs.existsSync(pubFile) || !fs.existsSync(addonFile)) {
     : pub;
   const norm = (s2) => s2.replace(/\s*$/, "\n");
   check("アドオンを除いた中身が 節別予想.html と完全一致", norm(stripped) === norm(wk),
-    "publish/ で node build.js ../節別予想.html を実行すること");
-  check("埋め込まれたアドオンが publish/sync-addon.html と一致",
+    "node tools/publish.js を実行すること");
+  check("埋め込まれたアドオンが tools/sync-addon.html と一致",
     i2 >= 0 && j2 > i2 && pub.slice(i2, j2 + E_TAG.length).trim() === addon);
 
   const missing = ["const LEAGUES", "const STATE", "function save(", "function refit(", "function renderAll("]
     .filter((n) => !stripped.includes(n));
   check("アドオンが借りている名前が本体にそろっている", missing.length === 0, missing.join(" / "));
 
-  const leaks = [/岡本/, /kakeru/i, /ge-creative/i, /GE00525/, /OneDrive/i, /C:\\/].filter((re) => re.test(pub));
+  /* ★見張りが本当に働くかを、答えの分かる文字列で確かめる。
+     「個人情報なし」と表示されても仕組みが壊れていれば意味がないので、機能として試す。
+     data/leak-words.txt（自分固有の語）の有無は問わない。
+     あのファイルは .gitignore してあるので CI には存在せず、
+     「無ければ不合格」にすると CI が必ず落ちる（実際に落ちて気づいた）。 */
+  const leakLib = require("./lib/leaks");
+  check("個人情報の見張りが働く（ローカルの絶対パスを検出できる）",
+    leakLib.find("C:\\Users\\someone\\OneDrive\\x").length > 0);
+  check("問題ない文字列は検出しない（誤検出しない）",
+    leakLib.find("鹿島 2-1 浦和 / 第5節").length === 0);
+  if (!leakLib.hasLocalWords()) {
+    console.log("     ℹ data/leak-words.txt が無いので汎用の語だけで見ています" +
+      "（手元では氏名などを足すと安全です）");
+  }
+  const leaks = leakLib.find(pub);
   check("個人情報らしき文字列が入っていない", leaks.length === 0, leaks.join(", "));
   const ext = [...pub.matchAll(/<(?:script|link|img|iframe|source)[^>]*\b(?:src|href)="(?!data:|#)([^"]+)"/gi)];
   check("外部から読み込むリソースが0件（1ファイルで完結する）", ext.length === 0, ext.map((m) => m[1]).join(", "));

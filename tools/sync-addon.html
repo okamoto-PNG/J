@@ -1,0 +1,244 @@
+<!-- sync-addon:start -->
+<script>
+/* ============================================================================
+   試合結果の自動取得アドオン（公開ページ専用）
+
+   本体（節別予想.html）のコードには一切手を入れない。
+   本体が作り直されても、このブロックを付け直すだけで済む（publish/build.js）。
+
+   本体から借りるもの: FIXTURES / STATE / save() / refit() / renderAll() / firstOpenWeek()
+   本体に足すもの    : 画面上部の取り込みバーと、その CSS だけ
+
+   取得元は Wikipedia。Ｊリーグ公式データサイトのほうが出典としては上だが、
+   CORS ヘッダを返さないのでブラウザからは読めない（Node からなら読める）。
+   ブラウザだけで完結させるには Wikipedia しか選べない。
+   ============================================================================ */
+(function () {
+"use strict";
+
+/* 本体が見つからなければ、何もせず黙って終わる（本体の動作は壊さない） */
+if (typeof FIXTURES === "undefined" || typeof STATE === "undefined" ||
+    typeof save !== "function" || typeof refit !== "function" ||
+    typeof renderAll !== "function") {
+  console.warn("[sync-addon] 本体が見つからないため、結果の自動取得は無効です。");
+  return;
+}
+
+const API = "https://ja.wikipedia.org/w/api.php";
+const MIN_INTERVAL = 30 * 60 * 1000;   // 自動取得の最短間隔（Wikipedia への負荷対策）
+
+/* リーグごとの取得元と、戦績表で使われている3文字コード → 本体のクラブ名。
+   ★昇降格でクラブが入れ替わったら、ここも直すこと。
+     直し忘れると、そのクラブの試合だけ静かに取り込まれない。
+     下の「読めた試合数が日程と食い違う」検出がそれを知らせる。 */
+const WIKI = {
+  J1: {
+    page: "2026/27シーズンのJ1リーグ",
+    code: {
+      ANT:"鹿島", HOL:"水戸", RED:"浦和", JEF:"千葉", REY:"柏", TOK:"FC東京", VER:"東京V",
+      ZEL:"町田", FRO:"川崎F", FMA:"横浜FM", SSP:"清水", GRA:"名古屋", SAN:"京都",
+      GAM:"G大阪", CRZ:"C大阪", VIS:"神戸", FAG:"岡山", SFR:"広島", AVI:"福岡", VVN:"長崎",
+    },
+  },
+  J2: {
+    page: "2026/27シーズンのJ2リーグ",
+    /* 各クラブのホーム/アウェイの並び（38節ぶん）を公式日程と突き合わせて機械的に確定させた表。
+       全380試合が一致することを確認済み。手で書くと必ず間違える。 */
+    code: {
+      ALB:"新潟", ARD:"大宮", BEL:"湘南", BLA:"秋田",
+      CON:"札幌", IMA:"今治", IWK:"いわき", JUB:"磐田",
+      KAT:"富山", MON:"山形", MYF:"藤枝", SAG:"鳥栖",
+      TCT:"栃木C", TEG:"宮崎", TRI:"大分", VAN:"八戸",
+      VEG:"仙台", VEN:"甲府", VOR:"徳島", YFC:"横浜FC",
+    },
+  },
+};
+
+/** いま表示しているリーグ。本体の LG を見る（無ければ J1 とみなす） */
+const league = () => (typeof LG !== "undefined" && WIKI[LG] ? LG : "J1");
+const stampKey = () => "jleague-2627-sync-" + league();
+
+/* "ホーム|アウェイ" → "節.添字"。戦績表は節を持たないので、日程から逆引きする。
+   リーグを切り替えると FIXTURES が変わるので、その都度作り直す。 */
+function slotMap() {
+  const m = {};
+  FIXTURES.forEach((wk, w) => wk.forEach((f, i) => { m[f.h + "|" + f.a] = (w + 1) + "." + i; }));
+  return m;
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+const stamp = {
+  get() { try { return +(localStorage.getItem(stampKey()) || 0); } catch (e) { return 0; } },
+  set(v) { try { localStorage.setItem(stampKey(), String(v)); } catch (e) {} },
+};
+
+/* --- 画面（本体の DOM には触らず、自前の要素を1つ足すだけ） --- */
+const style = document.createElement("style");
+style.textContent = `
+  .syncbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center;background:var(--panel,#fff);
+    border:1px solid var(--line,#e3e6ea);border-radius:var(--r,12px);padding:11px 14px;margin-bottom:14px}
+  .syncbar .msg{flex:1;min-width:190px;font-size:.76rem;color:var(--muted,#6b7280)}
+  .syncbar .msg.ok{color:var(--good,#16a34a)}
+  .syncbar .msg.err{color:var(--warn,#d97706)}
+  .syncbar button{font:inherit;color:var(--text,#16191d);background:var(--panel2,#fafbfc);
+    border:1px solid var(--line,#e3e6ea);border-radius:8px;padding:7px 10px;cursor:pointer}
+  .syncbar button:hover{border-color:var(--accent,#1d4ed8)}
+  .syncbar button:disabled{opacity:.4;cursor:default}
+  .syncbar .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line,#e3e6ea);
+    border-top-color:var(--accent,#1d4ed8);border-radius:50%;animation:syncsp .7s linear infinite;
+    vertical-align:-1px;margin-right:5px}
+  @keyframes syncsp{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.syncbar .spin{animation:none}}
+  @media (max-width:560px){.syncbar{padding:10px 12px}}`;
+document.head.appendChild(style);
+
+const bar = document.createElement("div");
+bar.className = "syncbar";
+bar.innerHTML = `<button type="button" id="syncBtn">最新の結果を取り込む</button>`
+              + `<span class="msg" id="syncMsg"></span>`;
+const anchor = document.getElementById("badges");
+if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor.nextSibling);
+else (document.querySelector(".wrap") || document.body).prepend(bar);
+
+const btn = document.getElementById("syncBtn"), msgEl = document.getElementById("syncMsg");
+function msg(html, cls) { msgEl.className = "msg " + (cls || ""); msgEl.innerHTML = html; }
+
+/* --- 戦績表の読み取り --- */
+/**
+ * "|match_ホーム_アウェイ=2-1" の形の行から確定スコアを拾う。
+ * 未消化の試合には日付（{{small|8/7}}）が入っているので、数字-数字だけを採る。
+ */
+function parseWiki(wt, lg) {
+  const CODE = WIKI[lg].code;
+  const SLOT = slotMap();
+  const out = [];
+  const unknown = new Set();     // 表に無い3文字コード（昇降格でクラブが変わった合図）
+  let rows = 0, unmapped = 0;    // 戦績表の行数と、日程に載っていなかった行
+  for (const line of String(wt).split("\n")) {
+    const m = line.match(/^\|match_([A-Z]{3})_([A-Z]{3})\s*=\s*(.*)$/);
+    if (!m) continue;
+    rows++;
+    const h = CODE[m[1]], a = CODE[m[2]];
+    if (!h || !a) { if (!CODE[m[1]]) unknown.add(m[1]); if (!CODE[m[2]]) unknown.add(m[2]); continue; }
+    const key = SLOT[h + "|" + a];
+    if (!key) { unmapped++; continue; }                  // 日程に無い行
+    const v = m[3]
+      .replace(/<ref[\s\S]*?(?:\/>|<\/ref>)/g, "")       // 脚注を落とす
+      .replace(/\{\{[^{}]*\}\}/g, "")                    // {{small|8/7}} などを落とす
+      .replace(/<[^>]*>/g, "")
+      .trim();
+    // 区切りはハイフンのほか en dash / em dash もありうる
+    const s = v.match(/^(\d{1,2})\s*[-–—]\s*(\d{1,2})$/);
+    if (!s) continue;                                    // 日付・空欄・延期などは未消化とみなす
+    out.push({ key, hg: +s[1], ag: +s[2] });
+  }
+  return { list: out, rows, unknown: [...unknown], unmapped };
+}
+
+/**
+ * 取り込む。既に入っているスコアは書き換えない（自分で直した値を守るため）。
+ * force=true のときだけ、食い違っている分を Wikipedia の値で上書きする。
+ */
+function applyWiki(list, force) {
+  let added = 0, changed = 0, kept = 0;
+  for (const r of list) {
+    const cur = STATE.results[r.key];
+    if (!cur) { STATE.results[r.key] = [r.hg, r.ag]; added++; continue; }
+    if (cur[0] === r.hg && cur[1] === r.ag) continue;
+    if (!force) { kept++; continue; }
+    STATE.results[r.key] = [r.hg, r.ag]; changed++;
+  }
+  return { added, changed, kept, total: list.length };
+}
+
+let busy = false, conflicts = 0, warn = "";
+async function sync(force) {
+  if (busy) return;
+  busy = true; btn.disabled = true;
+  msg(`<span class="spin"></span>最新の結果を確認しています…`, "");
+  try {
+    const lg = league();
+    const url = API + "?action=parse&format=json&formatversion=2&prop=wikitext"
+              + "&origin=*&redirects=1&page=" + encodeURIComponent(WIKI[lg].page);
+    const res = await fetch(url);            // 追加ヘッダを付けない＝preflight が起きない
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.info || j.error.code);
+    const wt = j.parse && j.parse.wikitext;
+    if (!wt) throw new Error("戦績表を読み取れませんでした");
+
+    const parsed = parseWiki(wt, lg);
+    const r = applyWiki(parsed.list, force);
+    conflicts = r.kept;
+    stamp.set(Date.now());
+
+    /* 取りこぼしの検出。
+       昇降格でクラブが入れ替わったのにコード表を直し忘れると、
+       そのクラブの試合だけ静かに落ちる。エラーも出ないので気づけない。
+       「戦績表には380行あるはずなのに、対応づいたのが少ない」で検出する。 */
+    if (parsed.unknown.length || parsed.unmapped) {
+      warn = lg + " の対応表が古い可能性があります（"
+        + (parsed.unknown.length ? "知らないクラブ略称 " + parsed.unknown.join("・") : "")
+        + (parsed.unknown.length && parsed.unmapped ? " / " : "")
+        + (parsed.unmapped ? parsed.unmapped + "試合が日程と対応せず" : "")
+        + "）。その試合は取り込めていません。";
+    } else warn = "";
+    if (r.added || r.changed) {
+      save(); refit();
+      if (typeof firstOpenWeek === "function") STATE.week = firstOpenWeek();
+      renderAll();
+    }
+    const bits = [];
+    if (r.added) bits.push(r.added + "試合を追加");
+    if (r.changed) bits.push(r.changed + "試合を上書き");
+    const tail = conflicts
+      ? ` 既に入っている${conflicts}試合は残しました。`
+        + `<button type="button" id="syncForce">Wikipediaの値で上書きする</button>`
+      : "";
+    const wtag = warn ? " ⚠ " + esc(warn) : "";
+    msg(wtag + (r.total === 0
+        ? "まだ結果は登録されていません（開幕前か、Wikipedia が未更新です）。自分でスコアを入れることもできます。"
+        : bits.length ? bits.join("・") + `しました。戦績表には ${r.total}試合。`
+                      : `最新の状態です。戦績表には ${r.total}試合。`) + tail,
+      warn ? "err" : r.total === 0 ? "" : "ok");
+    const fb = document.getElementById("syncForce");
+    if (fb) fb.addEventListener("click", () => { conflicts = 0; sync(true); });
+  } catch (e) {
+    msg("結果を取得できませんでした（" + esc(e.message) + "）。"
+      + "オフラインか、この環境では外部への通信が許可されていない可能性があります。"
+      + "スコアは自分で入力できます。", "err");
+  } finally {
+    busy = false; btn.disabled = false;
+  }
+}
+
+btn.addEventListener("click", () => sync(false));
+
+/* リーグを切り替えたら、そのリーグの結果も取りに行く。
+   本体の switchLeague を包んで、描画のあとに呼ぶ。 */
+if (typeof switchLeague === "function") {
+  const orig = switchLeague;
+  window.switchLeague = (k) => { orig(k); afterSwitch(); };
+  for (const b of document.querySelectorAll("button[data-lg]")) {
+    b.addEventListener("click", () => afterSwitch());
+  }
+}
+function afterSwitch() {
+  conflicts = 0; warn = "";
+  if (Date.now() - stamp.get() > MIN_INTERVAL) sync(false);
+  else msg("前回の取得から間もないため、保存済みの結果を表示しています。", "");
+}
+
+/* 前回の取得から時間が経っていれば、開いた時点で自動的に取りに行く */
+afterSwitch();
+
+/* 動作確認から呼べるように最小限だけ露出する。
+   本体の STATE は「トップレベルの const」なので window には生えない
+   （同じスクリプト同士なら参照できるが、外からは届かない）。だから getter で渡す。 */
+window.__sync = { parseWiki, applyWiki, sync, slotMap, WIKI, league,
+                  get state() { return STATE; }, get warn() { return warn; } };
+})();
+</script>
+<!-- sync-addon:end -->

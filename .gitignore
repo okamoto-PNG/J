@@ -7,3 +7,9 @@
 Thumbs.db
 *.swp
 node_modules/
+
+# 自動更新（tools/auto.js）の実行記録。中身は環境ごとに違うので追わない
+data/auto-log.txt
+
+# 個人情報の検出語。これ自体が個人情報なのでリポジトリに入れない（tools/lib/leaks.js）
+data/leak-words.txt

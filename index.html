@@ -584,9 +584,11 @@ const MATCHES = DATA.split(";").map((r) => {
 
 /* --- 2026-27シーズンのJ1所属20クラブ（data/j1-2026.json より生成）--- */
 const SEASON = 2026;
-const J1_2627 = [
-  "鹿島", "水戸", "浦和", "千葉", "柏", "FC東京", "東京V", "町田", "川崎F", "横浜FM",
-  "清水", "名古屋", "京都", "G大阪", "C大阪", "神戸", "岡山", "広島", "福岡", "長崎",
+const TEAMS = [
+  "C大阪", "FC東京", "G大阪", "京都", "千葉",
+  "名古屋", "岡山", "川崎F", "広島", "東京V",
+  "柏", "横浜FM", "水戸", "浦和", "清水",
+  "町田", "神戸", "福岡", "長崎", "鹿島",
 ];
 const FULL = {
   "鹿島":"鹿島アントラーズ", "水戸":"水戸ホーリーホック", "浦和":"浦和レッズ",
@@ -792,7 +794,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const pct = (v) => (v * 100).toFixed(1);
 
 function buildSelects() {
-  const opts = J1_2627
+  const opts = TEAMS
     .map((t) => ({ t, n: FULL[t] }))
     .sort((a, b) => a.n.localeCompare(b.n, "ja"))
     .map((o) => `<option value="${esc(o.t)}">${esc(o.n)}</option>`).join("");
@@ -802,7 +804,7 @@ function buildSelects() {
 
 function buildBadges() {
   const n = MATCHES.length;
-  const noHist = J1_2627.filter((t) => !STATE.fit.R[t]);
+  const noHist = TEAMS.filter((t) => !STATE.fit.R[t]);
   $("badges").innerHTML = `
     <span class="badge">学習データ <b>${n.toLocaleString()}試合</b>（2015-2025）</span>
     <span class="badge">検証 <b>2670試合</b>で的中率 <b>45.8%</b></span>
@@ -967,7 +969,7 @@ function renderResult(p) {
 }
 
 function renderRanking() {
-  const rows = J1_2627.map((t) => {
+  const rows = TEAMS.map((t) => {
     const r = ratingOf(STATE.fit, t);
     // 中立地で平均的な相手と戦ったときの期待得点差＝総合力の目安
     const off = (r.atkH + r.atkA) / 2, def = (r.defH + r.defA) / 2;
@@ -1001,7 +1003,7 @@ function render() {
 
   // 同じクラブが選ばれたら相手をずらす
   if (STATE.home === STATE.away) {
-    const alt = J1_2627.find((t) => t !== STATE.home);
+    const alt = TEAMS.find((t) => t !== STATE.home);
     STATE.away = alt; $("away").value = alt;
   }
 

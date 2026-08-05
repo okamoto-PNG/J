@@ -17,6 +17,8 @@ const fs = require("fs");
 const path = require("path");
 const { load, dayNum } = require("./lib/data");
 const { run, J1 } = require("./backtest");
+/* 学習/検証区間は data/season.json から（直書きしない） */
+const S = require("./lib/season").require();
 
 const params = load("params.json");
 const P = params.model;
@@ -67,7 +69,7 @@ const atOther = summarize(offVenue, "本拠地以外");
    モデルの期待得点で割って、地力の違いを打ち消してから見る */
 console.log("\n強さの違いを打ち消した比較（実測 ÷ 期待）:");
 const need = new Map();
-for (const Y of [...new Set(J1.map((m) => m.s))].filter((y) => y >= 2018)) {
+for (const Y of [...new Set(J1.map((m) => m.s))].filter((y) => y >= S.firstEval)) {
   const past = J1.filter((m) => m.s < Y);
   const hasHistory = new Set(past.flatMap((m) => [m.h, m.a]));
   const M = require("./lib/model");
@@ -77,8 +79,8 @@ for (const Y of [...new Set(J1.map((m) => m.s))].filter((y) => y >= 2018)) {
     need.set(m, { eh: b.lh, ea: b.la });
   }
 }
-for (const [label, rows] of [["本拠地", J1.filter((m) => m.s >= 2018 && !isAway(m))],
-                             ["本拠地以外", J1.filter((m) => m.s >= 2018 && isAway(m))]]) {
+for (const [label, rows] of [["本拠地", J1.filter((m) => m.s >= S.firstEval && !isAway(m))],
+                             ["本拠地以外", J1.filter((m) => m.s >= S.firstEval && isAway(m))]]) {
   let gf = 0, ga = 0, ef = 0, ea = 0;
   for (const m of rows) {
     const e = need.get(m); if (!e) continue;
@@ -100,16 +102,16 @@ function withVenue(v) {
 }
 
 console.log("\n=== 本拠地以外での補正 v をバックテストで決める ===");
-console.log("  v      学習(2018-22)  検証(2023-25)   全体      両区間で改善");
+console.log(`  v      学習(${S.train.join("-")})  検証(${S.test.join("-")})   全体      両区間で改善`);
 const base = { tr: run(P, 0).ll };
-const trBase = run(P, 0, false, null, [2018, 2022]).ll;
-const teBase = run(P, 0, false, null, [2023, 2025]).ll;
+const trBase = run(P, 0, false, null, S.train).ll;
+const teBase = run(P, 0, false, null, S.test).ll;
 const rows = [{ v: 1.0, train: trBase, test: teBase, all: base.tr }];
 console.log(`  1.00   ${trBase.toFixed(5)}       ${teBase.toFixed(5)}        ${base.tr.toFixed(5)}   —`);
 
 for (const v of [0.94, 0.96, 0.98, 1.02, 1.04]) {
-  const tr = run(P, 0, false, null, [2018, 2022], null, withVenue(v)).ll;
-  const te = run(P, 0, false, null, [2023, 2025], null, withVenue(v)).ll;
+  const tr = run(P, 0, false, null, S.train, null, withVenue(v)).ll;
+  const te = run(P, 0, false, null, S.test, null, withVenue(v)).ll;
   const al = run(P, 0, false, null, null, null, withVenue(v)).ll;
   const both = tr < trBase - 1e-9 && te < teBase - 1e-9;
   rows.push({ v, train: tr, test: te, all: al, both });

@@ -20,6 +20,7 @@
 const fs = require("fs");
 const path = require("path");
 const { load, dayNum } = require("./lib/data");
+const S = require("./lib/season").require();
 const M = require("./lib/model");
 const { run } = require("./backtest");
 
@@ -210,8 +211,8 @@ console.log("昇格クラブが絡む試合だけを採点する（全体では�
 
 const base = {
   b: 0, view: null,
-  train: run(P, 0, false, PROMOTED, [2018, 2022], onlyPromoted).ll,
-  test: run(P, 0, false, PROMOTED, [2023, 2025], onlyPromoted).ll,
+  train: run(P, 0, false, PROMOTED, S.train, onlyPromoted).ll,
+  test: run(P, 0, false, PROMOTED, S.test, onlyPromoted).ll,
 };
 const pa0 = run(P, 0, false, PROMOTED, null, onlyPromoted);
 base.promotedAll = pa0.ll; base.n = pa0.n;
@@ -225,8 +226,8 @@ for (const view of J2_VIEWS) {
   console.log("   b     学習       検証       昇格戦全体   両区間で改善");
   for (const b of [0.2, 0.4, 0.6, 0.8, 1.0]) {
     const prior = buildPrior(b, view);
-    const tr = run(P, 0, false, prior, [2018, 2022], onlyPromoted).ll;
-    const te = run(P, 0, false, prior, [2023, 2025], onlyPromoted).ll;
+    const tr = run(P, 0, false, prior, S.train, onlyPromoted).ll;
+    const te = run(P, 0, false, prior, S.test, onlyPromoted).ll;
     const pa = run(P, 0, false, prior, null, onlyPromoted);
     const both = tr < base.train - 1e-9 && te < base.test - 1e-9;
     rows.push({ b, view: view.label, hl: view.hl, sh: view.sh, train: tr, test: te, promotedAll: pa.ll, n: pa.n });
@@ -244,21 +245,21 @@ console.log(ok.length
   : `\n→ 採用しない（b = 0）。どの設定でも「片方の区間でしか改善しない」ため、` +
     `\n   J2成績の持ち越しは実在する効果として確認できなかった。従来の昇格クラブ平均を使う。`);
 
-/* ------------------------------------------------- 2026-27 の水戸・千葉 */
+/* ------------------------------------------------- 予想対象シーズンの昇格クラブ */
 
-const j1_2026 = load("j1-2026.json");
+const j1next = load(S.files.J1);
 const inJ1 = new Set(j1.map((m) => [m.h, m.a]).flat());
-const newFor2026 = [...new Set(j1_2026.flatMap((m) => [m.h, m.a]))].filter((c) => !inJ1.has(c));
+const newcomersNext = [...new Set(j1next.flatMap((m) => [m.h, m.a]))].filter((c) => !inJ1.has(c));
 const bestView = best.view ? J2_VIEWS.find((v) => v.label === best.view) : J2_VIEWS[3];
-const j2r2026 = ratingsAt(j2, 2026, bestView.hl, bestView.sh);
+const j2ratNext = ratingsAt(j2, S.upcoming, bestView.hl, bestView.sh);
 
-console.log(`\n=== 2026-27 で J1 履歴が無いクラブ: ${newFor2026.join(" / ")} ===`);
-const prior2026 = {};
+console.log(`\n=== ${S.label} で J1 履歴が無いクラブ: ${newcomersNext.join(" / ")} ===`);
+const priorNext = {};
 console.log("クラブ   J2攻撃H  J2守備H  →  J1事前 atkH  defH   atkA   defA");
-for (const c of newFor2026) {
-  const p = priorFromJ2(j2r2026, c, best.b);
-  prior2026[c] = p;
-  const r = j2r2026[c];
+for (const c of newcomersNext) {
+  const p = priorFromJ2(j2ratNext, c, best.b);
+  priorNext[c] = p;
+  const r = j2ratNext[c];
   console.log(`${c.padEnd(7)} ${r ? r.atkH.toFixed(3) : "  -  "}    ${r ? r.defH.toFixed(3) : "  -  "}      ` +
     `${p.atkH.toFixed(3)}  ${p.defH.toFixed(3)}  ${p.atkA.toFixed(3)}  ${p.defA.toFixed(3)}`);
 }
@@ -274,7 +275,7 @@ const out = {
   promotedAverage: PROMOTED,
   leagueAverage: { home: AVG.lgH, away: AVG.lgA },
   sampleClubs: AVG.nClubs, sampleAppearances: AVG.nMatches,
-  prior2026,
+  priorNext,
   verdict: best.b === 0
     ? "J2の成績を使っても精度は上がらなかった。昇格クラブ平均のまま使う"
     : `J2の強さを ${best.b} の割合で持ち越すと精度が上がる`,

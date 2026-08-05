@@ -56,7 +56,9 @@ for (const tag of ["<!DOCTYPE", "<html", "<head", "<body", "</html>"]) {
 }
 
 /* 2) 個人情報の混入（publish/build.js と同じ検査） */
-const leaks = [/岡本/, /kakeru/i, /ge-creative/i, /GE00525/, /OneDrive/i, /C:\\/];
+/* 検出語は tools/lib/leaks.js（自分固有の語は data/leak-words.txt。.gitignore 済み）。
+   ここに並べるとリポジトリを公開したときにその並び自体が漏洩になる。 */
+const leaks = require("./lib/leaks").patterns();
 const found = leaks.filter((r) => r.test(out));
 if (found.length) die("個人情報らしき文字列が含まれています: " + found.join(", "));
 

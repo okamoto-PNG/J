@@ -21,12 +21,14 @@ const path = require("path");
 const { load } = require("./lib/data");
 const M = require("./lib/model");
 const core = require("./lib/backtest-core");
+const SEASON_INFO = require("./lib/season").require();
 
 const pf = path.join(__dirname, "..", "data", "promoted.json");
 const PROMOTED = fs.existsSync(pf)
   ? JSON.parse(fs.readFileSync(pf, "utf8")).promotedAverage
   : M.DEFAULT_PROMOTED;
-const FIRST_EVAL = 2018;
+/* 採点を始めるシーズン。直書きせず data/season.json から取る（来季もここを触らないため） */
+const FIRST_EVAL = SEASON_INFO.firstEval;
 
 const BT = core.make({
   matches: load("j1-matches.json"),
@@ -52,7 +54,7 @@ if (require.main !== module) {
 } else if (!arg) {
   const P = M.DEFAULT_P;
   const r = run(P, 0);
-  console.log("=== 時系列バックテスト（2018-2025・日程補正なし）===");
+  console.log(`=== 時系列バックテスト（${FIRST_EVAL}-${SEASON_INFO.histEnd}・日程補正なし）===`);
   console.log("本モデル   ", fmt(r));
   console.log(`基準率     log loss ${r.llBase.toFixed(5)}  的中率 ${(r.hitBase * 100).toFixed(2)}%`);
   console.log(`一様(1/3)  log loss ${Math.log(3).toFixed(5)}  的中率 33.33%`);

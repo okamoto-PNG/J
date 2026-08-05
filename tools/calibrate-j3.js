@@ -30,9 +30,10 @@ const { load } = require("./lib/data");
 const core = require("./lib/backtest-core");
 
 const DATA = path.join(__dirname, "..", "data");
-const TRAIN = [2018, 2022];
-const TEST = [2023, 2025];
-const FIRST_EVAL = 2018;
+const S = require("./lib/season").require();
+const TRAIN = S.train;
+const TEST = S.test;
+const FIRST_EVAL = S.firstEval;
 const KEYS = ["atkH", "defH", "atkA", "defA"];
 
 /* 測るときのパラメータは J1 の確定値を使う。
@@ -341,26 +342,26 @@ if (bySum !== best) {
   console.log("  学習区間は b に対して単調に良くなるので、和で選ぶと b が上がりきってしまう。");
 }
 
-/* ------------------------------------------------------------ 2026-27 の新顔 */
+/* ------------------------------------------------------------ 予想対象シーズンの新顔 */
 
-const j2next = load("j2-2026.json");
+const j2next = load(S.files.J2);
 const inJ2 = new Set(j2.flatMap((m) => [m.h, m.a]));
-const newFor2026 = [...new Set(j2next.flatMap((m) => [m.h, m.a]))].filter((c) => !inJ2.has(c));
+const newcomersNext = [...new Set(j2next.flatMap((m) => [m.h, m.a]))].filter((c) => !inJ2.has(c));
 
-const prior2026 = {};
-console.log(`\n=== 2026-27 で J2 履歴が無いクラブ: ${newFor2026.join(" / ") || "なし"} ===`);
-if (newFor2026.length) {
+const priorNext = {};
+console.log(`\n=== ${S.label} で J2 履歴が無いクラブ: ${newcomersNext.join(" / ") || "なし"} ===`);
+if (newcomersNext.length) {
   const view = best.view ? VIEWS.find((v) => v.label === best.view) : VIEWS[1];
   console.log("クラブ    出自   atkH    defH    atkA    defA");
-  for (const c of newFor2026) {
-    const from = originOf(c, 2026);
+  for (const c of newcomersNext) {
+    const from = originOf(c, S.upcoming);
     const bs = best.mode === "single" ? SINGLE : groupBase(from);
     let p = bs;
     if (best.mode === "indiv" && SRC[from]) {
-      const r = ratingsAt(SRC[from], 2026, view.hl, view.sh)?.[c];
+      const r = ratingsAt(SRC[from], S.upcoming, view.hl, view.sh)?.[c];
       if (r) p = Object.fromEntries(KEYS.map((k) => [k, bs[k] + best.b * (r[k] - 1)]));
     }
-    prior2026[c] = p;
+    priorNext[c] = p;
     console.log(`${c.padEnd(9)} ${from.padEnd(5)}  ${KEYS.map((k) => p[k].toFixed(4)).join("  ")}`);
   }
 }
@@ -375,7 +376,7 @@ const bestView = best.view ? VIEWS.find((v) => v.label === best.view) : VIEWS[1]
 const resolved = best.mode === "single" ? {} : buildPrior(best.mode, best.b, bestView).byClub;
 const origins = {};
 for (const Y of SEASONS.slice(1)) for (const c of newcomersIn(Y)) origins[c] = { season: Y, from: originOf(c, Y) };
-for (const c of newFor2026) origins[c] = { season: 2026, from: originOf(c, 2026) };
+for (const c of newcomersNext) origins[c] = { season: S.upcoming, from: originOf(c, S.upcoming) };
 
 
 const out = {
@@ -401,11 +402,11 @@ const out = {
   grid: rows,
   baseline: { train: base.train, test: base.test, all: base.all.ll, matches: base.all.n },
   best: { train: best.train, test: best.test, all: best.all, matches: best.n },
-  /* 履歴なしクラブ → 事前分布。過去の新顔（バックテスト用）と 2026-27 の新顔の両方を含む。
+  /* 履歴なしクラブ → 事前分布。過去の新顔（バックテスト用）と 予想対象シーズンの新顔の両方を含む。
      tune-j2.js と build.js はこれをそのまま使う。 */
-  byClub: { ...resolved, ...prior2026 },
+  byClub: { ...resolved, ...priorNext },
   origins,
-  prior2026,
+  priorNext,
   verdict: best.mode === "single"
     ? "J3 を使っても J2 の新顔の評価は良くならなかった。混ぜた平均のまま使う"
     : best.mode === "group"

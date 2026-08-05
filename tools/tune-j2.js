@@ -21,10 +21,11 @@ const { load } = require("./lib/data");
 const M = require("./lib/model");
 const core = require("./lib/backtest-core");
 
-const TRAIN = [2018, 2022];
-const TEST = [2023, 2025];
+const S = require("./lib/season").require();
+const TRAIN = S.train;
+const TEST = S.test;
 const OFF = 1e9;
-const FIRST_EVAL = 2018;
+const FIRST_EVAL = S.firstEval;
 
 const j2all = load("j2-matches.json");
 const ylc = load("ylc-matches.json");
@@ -34,9 +35,12 @@ const ylc = load("ylc-matches.json");
    J1 と違い、J2 の新顔には2種類ある。
      ・J1 から落ちてきたクラブ（強いことが多い）
      ・J3 から上がってきたクラブ（弱いことが多い）
-   J3 のデータを持っていないので個別には評価できない。
-   そこで「J2 に初めて出たシーズンの実績」を全部ならした平均像を作る。
+   まず「J2 に初めて出たシーズンの実績」を全部ならした平均像を作る。
    これは J1 側の promotedAverage とまったく同じ考え方。
+
+   ★ 以前ここには「J3 のデータを持っていないので個別には評価できない」と書いていた。
+   J3（2015-2026・3666試合）を取得したので、その制約は無くなった。
+   出自で分けて個別に評価する部分は 1-b) で読み込む。
    ============================================================================ */
 function newcomerAverage(rows) {
   const played = rows.filter((m) => m.hg != null);
@@ -176,12 +180,16 @@ const out = {
   startedFrom: "data/params.json の J1 確定値",
   sameAsJ1: same,
   model: P,
+  /* 履歴なしクラブを寄せる先。
+     newcomer は「混ぜた平均1組」で、個別の値が無いクラブのフォールバックとして残す。
+     出自ごとの個別の値は data/calib-j3.json（byClub）が正で、build.js もそこから読む。 */
   newcomer: {
-    ...PRIOR,
+    ...AVERAGE,
     method: "J2に初めて現れたシーズンの成績を、そのシーズンのリーグ平均で割って平均したもの",
-    note: "J1から落ちてきたクラブとJ3から上がってきたクラブが混ざった平均像。J3のデータが無いので個別には分けられない",
+    note: "J1から落ちてきたクラブとJ3から上がってきたクラブが混ざった平均像。個別の値は data/calib-j3.json にある（無いクラブはこの値に寄せる）",
     clubSeasons: NEW.clubSeasons, appearances: NEW.appearances,
   },
+  newcomerByClub: j3note,
   adopted,
   accuracy: {
     logLoss: final.ll, hitRate: final.hit, matches: final.n,

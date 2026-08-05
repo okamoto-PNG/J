@@ -26,8 +26,10 @@ const { parseHtml } = require("./parse.js");
 const { load, dayNum, nakaDays, buildAppearances, previousMatch } = require("./lib/data.js");
 
 const ROOT = path.join(__dirname, "..");
-const SEASON = 2026;            // 予想対象シーズン（2026-27）
-const PREV = 2025;              // 前季
+/* 予想対象シーズンと前季は data/season.json から。直書きしない */
+const SEASON_INFO = require("./lib/season").require();
+const SEASON = SEASON_INFO.upcoming;
+const PREV = SEASON_INFO.histEnd;
 const OUT = path.join(ROOT, "AI予想.html");
 
 const MODEL = "claude-opus-5";
@@ -109,7 +111,7 @@ async function gather(doFetch) {
     console.log(`${ylc.length}試合`);
     source = "実行時に公式データサイトから取得";
   } else {
-    season = load("j1-2026.json");
+    season = load(SEASON_INFO.files.J1);
     ylc = load("ylc-matches.json").filter((m) => m.s === SEASON);
     source = "data/*.json（--no-fetch）";
   }

@@ -31,7 +31,7 @@ function section(name) {
 
 const hist = load("j1-matches.json");
 const j2 = load("j2-matches.json");
-const fixtures = load("j1-2026.json");
+const fixtures = load(require("./lib/season").require().files.J1);
 const ylc = load("ylc-matches.json");
 
 const y2025 = hist.filter((m) => m.s === 2025);
