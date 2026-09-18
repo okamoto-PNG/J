@@ -177,7 +177,11 @@ check("節が進むと日付も進む（節ごとの中央値が単調）", (() 
   });
   return med.every((d, i) => i === 0 || d >= med[i - 1]);
 })());
-check("結果は未記入（これから予想するシーズン）", f26.every((m) => m.hg === null));
+/* 開幕前は全部未記入だが、開幕すれば埋まっていく。season.json の定義は
+   「まだ結果が無い試合がある最後のシーズン」なので、見るべきは“残っているか”。
+   全部埋まっていたら、そのシーズンはもう予想対象ではない（境界の導出が狂っている）。*/
+check("予想対象シーズンに未消化の試合が残っている", f26.some((m) => m.hg === null),
+  `未消化 ${f26.filter((m) => m.hg == null).length}/${f26.length}試合`);
 
 const first = f26.filter((m) => m.round === 1).sort((a, b) => dayNum(a.date) - dayNum(b.date))[0];
 console.log(`     開幕: ${first.date} ${first.h} vs ${first.a}（${first.venue}）`);
@@ -212,7 +216,7 @@ check("J3に試合日がある", j3.filter((m) => m.date).length / j3.length > 0
 check(`J3 ${SI.first}-${SI.histEnd} は全試合にスコアがある`,
   j3.filter((m) => m.s <= SI.histEnd).every((m) => Number.isInteger(m.hg)),
   `未消化 ${j3.filter((m) => m.s <= SI.histEnd && m.hg == null).length}件`);
-check(`J3 ${SI.label} は結果が未記入（これから始まるシーズン）`,
+check(`J3 ${SI.label} に未消化の試合が残っている`,
   j3.filter((m) => m.s === SI.upcoming).every((m) => m.hg === null));
 /* ★ J1・J2 と違い、J3 では「同じ順序ペアがシーズン中1回だけ」が成り立たない。
    2015年は13クラブしかなく、同じ組み合わせを最大3回戦っている（総当たり3回制）。
@@ -776,8 +780,12 @@ if (!sc) {
       .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
     const m0 = wk1[0];
     const want = Date.parse(m0.date + "T" + (m0.ko ? m0.ko : "00:00") + ":00+09:00");
-    check("締切が公式の試合日・K/O時刻（日本時間）と一致", dl10 === want,
+    /* K/O は5分単位で持っている（tools/build.js の koCode）。端数は切り捨てるので、
+       締切は公式のキックオフと同じか、最大5分早い。後になってはいけない。 */
+    check("締切が公式のキックオフを過ぎていない", dl10 <= want,
       `${new Date(dl10).toISOString()} vs ${new Date(want).toISOString()}（${m0.date} ${m0.ko ?? "未定"}）`);
+    check("締切と公式のキックオフの差が5分未満（5分単位で持っているため）",
+      want - dl10 < 5 * 60000, `差 ${((want - dl10) / 60000).toFixed(0)}分（${m0.ko ?? "未定"}）`);
     check("K/O時刻の有無を正しく判定する", sc.koKnown(1, 0) === Boolean(m0.ko));
   }
   /* 2026-08-07 が開幕なので、開幕前の時刻では締まっておらず、シーズン後なら締まっている */
@@ -830,6 +838,16 @@ if (!sc) {
       bad.length === 0, bad.length ? `len=${bad.map((t) => t.length).join(",")}` : "");
   }
 
+  /* 封印できるのは締切前の節だけ。シーズンが進めば第1節は締切後になるので、
+     固定せず「まだ締切が来ていない最初の節」を選ぶ。
+     全節が締切後（シーズン終了後）なら、封印できることの検算は成り立たないので飛ばす。 */
+  let openW = 0, closedW = 0;
+  for (let w = 1; w <= sc.WEEKS; w++) {
+    if (!openW && !sc.roundClosed(w)) openW = w;
+    if (!closedW && sc.roundClosed(w)) closedW = w;
+  }
+  console.log(`     封印の検算に使う節: 締切前=${openW || "なし"} / 締切後=${closedW || "なし"}`);
+
   sc.ME = { name: "検算", salt: "0123456789abcdef" };
   for (const k of Object.keys(sc.STATE.picks)) delete sc.STATE.picks[k];
   for (const k of Object.keys(sc.STATE.sealed)) delete sc.STATE.sealed[k];
@@ -856,7 +874,24 @@ if (!sc) {
     sc.sealCodeOf("J2", 1, sc.ME.salt, sc.STATE.picks) !== code1);
 
   /* 封印すると予想が動かせなくなる（変えたらコードが合わなくなるため） */
-  check("締切前なら封印できる", sc.sealRound(1) === true && sc.isSealed(1));
+  if (openW) {
+    check(`締切前なら封印できる（第${openW}節）`,
+      sc.sealRound(openW) === true && sc.isSealed(openW));
+    check(`封印を解ける（第${openW}節）`,
+      sc.unsealRound(openW) === true && !sc.isSealed(openW));
+    sc.sealRound(openW);
+  } else {
+    console.log("  ・ 締切前の節が無いため、封印できることの検算は飛ばした（シーズン終了後）");
+  }
+  if (closedW) {
+    /* シーズンが進むと本物の「締切後の節」ができる。開幕前は作れなかった検算。 */
+    const wasSealed = sc.isSealed(closedW);
+    check(`締切後は封印できない（第${closedW}節）`, sc.sealRound(closedW) === false);
+    check(`締切後は封印を解けない（第${closedW}節）`,
+      sc.unsealRound(closedW) === false && sc.isSealed(closedW) === wasSealed);
+  } else {
+    console.log("  ・ 締切後の節がまだ無いため、封印を拒むことの検算は飛ばした（開幕前）");
+  }
   check("節の締切は10試合のうち最も早いキックオフ", (() => {
     const all = Array.from({ length: sc.PER_WEEK }, (_, i) => sc.deadlineOf(1, i)).filter((x) => x != null);
     return sc.roundDeadline(1) === Math.min(...all);
@@ -865,12 +900,6 @@ if (!sc) {
     const msg = sc.sealMessage(1);
     return msg.includes(code1) && msg.includes("検算") && msg.includes("第1節");
   })());
-  check("締切後は封印できない・解けない", (() => {
-    /* 第1節は 2026-08-07 開幕なので、過去のシーズンにあたる節は無い。
-       代わりに「締切を過ぎている扱い」を作れないので、解除の可否だけ確認する */
-    return sc.unsealRound(1) === true && !sc.isSealed(1);
-  })());
-  sc.sealRound(1);
 
   /* 照合。共有された予想＋salt からコードを再計算して突き合わせる */
   check("自分のコードを照合できる", (() => {
@@ -883,11 +912,14 @@ if (!sc) {
     sc.checkCode("0000-0000-0000").code !== code1);
   check("桁が足りないコードは拒否する", sc.checkCode("a3f9-21c8") === null);
 
-  /* 版3の共有文字列に salt と封印済みの節が乗るか */
+  /* いま出す共有文字列（版4）に salt と封印済みの節が乗るか */
   const v3 = sc.shareString();
   const p3 = sc.parseShare(v3);
-  check("版3の共有文字列に salt が乗る", p3 && p3.salt === sc.ME.salt, p3 && p3.salt);
-  check("版3の共有文字列に封印済みの節が乗る", p3 && p3.sealed["1"] === 1, JSON.stringify(p3?.sealed));
+  check("共有文字列に salt が乗る", p3 && p3.salt === sc.ME.salt, p3 && p3.salt);
+  if (openW) {
+    check("共有文字列に封印済みの節が乗る", p3 && p3.sealed[String(openW)] === 1,
+      JSON.stringify(p3?.sealed));
+  }
   check(`封印済みの節の文字列が${sc.WEEKS}文字`, sc.encodeSealed({ 1: 1 }).length === sc.WEEKS);
   check("壊れた封印済み文字列は拒否する",
     sc.decodeSealed("2".repeat(sc.WEEKS)) === null && sc.decodeSealed("1".repeat(sc.WEEKS - 1)) === null);
@@ -905,7 +937,7 @@ if (!sc) {
   delete sc.PEERS.J1["佐藤2"];
 
   /* 封印した節は予想を変更できない（UI側の判定に使う） */
-  check("封印した節は変更できない扱いになる", sc.isSealed(1) === true);
+  if (openW) check("封印した節は変更できない扱いになる", sc.isSealed(openW) === true);
   for (const k of Object.keys(sc.STATE.sealed)) delete sc.STATE.sealed[k];
 
   /* --- 採点の算数。答えが分かっている入力を通す --- */

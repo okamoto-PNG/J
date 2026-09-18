@@ -241,6 +241,8 @@ function histOf(rows, file, re) {
 /* 予想の締切に使う「試合ごとのキックオフ」。
    1節が2〜3日に分散するので、節単位で締めると日曜の試合を予想できなくなる。
    1試合4文字：日付（2026-01-01からの日数・36進数2桁）＋ K/O（5分単位・36進数2桁）。
+   5分単位なので端数は**切り捨てる**。四捨五入だと 19:28 が 19:30 になり、
+   締切がキックオフより後になってしまう（試合開始後に入れた予想が「締切前」になる）。
    日付が未発表なら "...."、時刻だけ未発表なら日付＋".."（アプリ側で当日0時として扱う）。
    ※K/O時刻はJリーグが数週間前に発表するので、取得時点では半分以上が未定。 */
 const KO_EPOCH = S.koEpochUTC;   // 予想対象シーズンの1月1日（data/season.json）
@@ -252,7 +254,7 @@ function koCode(m) {
   const t = m.ko ? m.ko.match(/^(\d{1,2}):(\d{2})$/) : null;
   if (!t) return b36pad(days) + "..";
   const min = Number(t[1]) * 60 + Number(t[2]);
-  return b36pad(days) + b36pad(Math.round(min / 5));
+  return b36pad(days) + b36pad(Math.floor(min / 5));
 }
 
 /** 1リーグぶんの今季日程を圧縮する */
