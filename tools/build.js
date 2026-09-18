@@ -257,17 +257,64 @@ function koCode(m) {
   return b36pad(days) + b36pad(Math.floor(min / 5));
 }
 
+/**
+ * すでに公開してあるHTMLから「節ごとの試合の並び」を取り出す。
+ *
+ * ★利用者の入力（結果・予想）は、その端末の localStorage に
+ *   「節.その節の中の位置」で入っている。位置は日付順で決めているので、
+ *   1試合でも延期されると節ぜんたいの位置がずれ、
+ *   **入れてあった結果や予想が別の試合に付け替わる**。
+ *   対戦カードの顔ぶれが同じ節は、並びを動かさないこと。
+ *   （クラブの並びを keepOrder で守っているのと同じ理由）
+ */
+function prevWeekOrder(key) {
+  const out = new Map();
+  try {
+    const src = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8");
+    /* leagueBlock が書く形にそのまま合わせる。緩くすると、
+       HIST の "J2: { clubs: ..." に当たったあと J1 の teams を拾ってしまう。 */
+    const blk = src.match(new RegExp(
+      `\\n  ${key}: \\{\\n    label: "${key}",\\n    teams: (\\[[^\\]]*\\]),\\n` +
+      `    fixturesRaw:((?:\\s*"[0-9A-Z]*"\\s*\\+?)+)`));
+    if (!blk) return out;
+    const teams = JSON.parse(blk[1]);
+    const raw = (blk[2].match(/"[0-9A-Z]*"/g) ?? []).map((s) => s.slice(1, -1)).join("");
+    const per = teams.length / 2;
+    for (let w = 0; (w + 1) * per * 2 <= raw.length; w++) {
+      const list = [];
+      for (let i = 0; i < per; i++) {
+        const at = (w * per + i) * 2;
+        list.push(teams[AB.indexOf(raw[at])] + "|" + teams[AB.indexOf(raw[at + 1])]);
+      }
+      out.set(w + 1, list);
+    }
+  } catch { /* 初回など。引き継ぐものが無いだけ */ }
+  return out;
+}
+
 /** 1リーグぶんの今季日程を圧縮する */
-function fixturesOf(rows, teams) {
+function fixturesOf(rows, teams, key) {
   const idx = new Map(teams.map((c, i) => [c, i]));
-  let raw = "", kicks = "";
+  const prev = key ? prevWeekOrder(key) : new Map();
+  let raw = "", kicks = "", kept = 0, redone = 0;
   for (let w = 1; w <= WEEKS; w++) {
-    const week = rows.filter((m) => m.round === w)
+    let week = rows.filter((m) => m.round === w)
       .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
+    /* 顔ぶれが同じなら、前回の並びをそのまま使う（入力の付け替えを防ぐ） */
+    const old = prev.get(w);
+    if (old && old.length === week.length) {
+      const byKey = new Map(week.map((m) => [m.h + "|" + m.a, m]));
+      if (old.every((k) => byKey.has(k))) { week = old.map((k) => byKey.get(k)); kept++; }
+      else { redone++; console.log(`  ℹ ${key} 第${w}節: 対戦カードが変わったので並びを作り直す`); }
+    }
     for (const m of week) {
       raw += AB[idx.get(m.h)] + AB[idx.get(m.a)];
       kicks += koCode(m);
     }
+  }
+  if (key) {
+    console.log(`  ・ ${key} 節の並び: ${kept}節を引き継ぎ / ${redone}節を作り直し / ` +
+      `${WEEKS - kept - redone}節は新規`);
   }
   const dates = Array.from({ length: WEEKS }, (_, i) => {
     const ds = rows.filter((m) => m.round === i + 1 && m.date).map((m) => m.date).sort();
@@ -280,8 +327,8 @@ const HIST_J1 = histOf(j1, "節別予想.html", /J1: \{ clubs: (\[[\s\S]*?\]), d
 const HIST_J2 = histOf(j2hist, "節別予想.html", /J2: \{ clubs: (\[[\s\S]*?\]), data:/);
 const J2_2627 = keepOrder("節別予想.html", /J2: \{ label: "J2", teams: (\[[\s\S]*?\]),/,
   [...new Set(f26j2.flatMap((m) => [m.h, m.a]))].sort());
-const FX_J1 = fixturesOf(f26, J1_2627);
-const FX_J2 = fixturesOf(f26j2, J2_2627);
+const FX_J1 = fixturesOf(f26, J1_2627, "J1");
+const FX_J2 = fixturesOf(f26j2, J2_2627, "J2");
 
 const arr = (a) => `[${a.map((c) => `"${c}"`).join(",")}]`;
 const num = (o) => `{ atkH:${o.atkH.toFixed(4)}, defH:${o.defH.toFixed(4)}, ` +

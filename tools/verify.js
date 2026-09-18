@@ -384,12 +384,19 @@ for (const L of LG_SPEC) {
     G.kickoffs?.length === N_MATCH * 4, String(G.kickoffs?.length));
   if (G.kickoffs?.length === N_MATCH * 4 && G.fixturesRaw?.length === N_MATCH * 2) {
     const EPOCH = SI.koEpochUTC;
-    /* HTML の並び（節ごとに日付順）を data/ 側でも再現して突き合わせる */
+    /* 節の中の並びは、利用者の入力を守るため前回のHTMLから引き継ぐことがある
+       （tools/build.js の prevWeekOrder）。なので日付順を決め打ちで再現せず、
+       「その位置に埋まっている対戦カード」を読んで、その試合の日時と突き合わせる。 */
+    const perW = SI.leagues[L.key].perWeek, clubs = SI.leagues[L.key].clubs;
+    const byCard = new Map(L.fixtures.map((m) => [m.round + "|" + m.h + "|" + m.a, m]));
     const want = [];
-    for (let w = 1; w <= SI.leagues[L.key].weeks; w++) {
-      const week = L.fixtures.filter((m) => m.round === w)
-        .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
-      want.push(...week);
+    for (let w = 0; w < SI.leagues[L.key].weeks; w++) {
+      for (let i2 = 0; i2 < perW; i2++) {
+        const at = w * clubs + i2 * 2;
+        const h = G.teams[AB.indexOf(G.fixturesRaw[at])];
+        const a = G.teams[AB.indexOf(G.fixturesRaw[at + 1])];
+        want.push(byCard.get((w + 1) + "|" + h + "|" + a) ?? { round: w + 1, h, a });
+      }
     }
     let bad = 0, noDate = 0, noKo = 0, firstBad = "";
     for (let n = 0; n < N_MATCH; n++) {
@@ -405,7 +412,7 @@ for (const L of LG_SPEC) {
       const wantD = days.toString(36).padStart(2, "0");
       const tm = m.ko ? m.ko.match(/^(\d{1,2}):(\d{2})$/) : null;
       const wantT = tm
-        ? Math.round((Number(tm[1]) * 60 + Number(tm[2])) / 5).toString(36).padStart(2, "0")
+        ? Math.floor((Number(tm[1]) * 60 + Number(tm[2])) / 5).toString(36).padStart(2, "0")
         : "..";
       if (!tm) noKo++;
       if (d !== wantD || t !== wantT) {
@@ -1076,6 +1083,74 @@ section("6-d. 自動更新の安全網（tools/auto.js）");
     !fs.existsSync(auto.BACKUP) || fs.readdirSync(auto.BACKUP).length === 0);
   /* 最後にもう一度、本物が壊れていないことを確かめる */
   check("検算の後もデータが元のまま", fs.readFileSync(target, "utf8") === original);
+}
+
+/* ═══════════════════════════════════════════════ 6-e. 節の並びが動かないこと */
+
+section("6-e. 日程が変わっても節の中の並びが動かない（tools/build.js）");
+
+/**
+ * ★利用者の入力（結果・予想）は localStorage に「節.その節の中の位置」で入っている。
+ *   位置は日付順で決めているので、1試合でも延期されると節ぜんたいの位置がずれ、
+ *   入れてあった結果や予想が**黙って別の試合に付け替わる**。
+ *   build.js の prevWeekOrder が前回の並びを引き継ぐことで防いでいる。
+ *
+ * 実際に延期を起こして確かめる。プロジェクトは触らず、
+ * 一時フォルダにコピーしてそこで build.js を走らせる。
+ */
+{
+  const os = require("os");
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "jl-order-"));
+  const rawOf = (html, key) => {
+    const m = html.match(new RegExp(
+      `\\n  ${key}: \\{\\n    label: "${key}",\\n    teams: (\\[[^\\]]*\\]),\\n` +
+      `    fixturesRaw:((?:\\s*"[0-9A-Z]*"\\s*\\+?)+)`));
+    return m ? m[2].match(/"[0-9A-Z]*"/g).map((x) => x.slice(1, -1)).join("") : null;
+  };
+  try {
+    fs.mkdirSync(path.join(work, "data"));
+    fs.mkdirSync(path.join(work, "tools"));
+    for (const f of fs.readdirSync(path.join(ROOT, "data")))
+      if (f.endsWith(".json")) fs.copyFileSync(path.join(ROOT, "data", f), path.join(work, "data", f));
+    fs.mkdirSync(path.join(work, "tools", "lib"));
+    for (const f of fs.readdirSync(path.join(ROOT, "tools")))
+      if (f.endsWith(".js")) fs.copyFileSync(path.join(ROOT, "tools", f), path.join(work, "tools", f));
+    for (const f of fs.readdirSync(path.join(ROOT, "tools", "lib")))          // build.js が require する
+      fs.copyFileSync(path.join(ROOT, "tools", "lib", f), path.join(work, "tools", "lib", f));
+    for (const f of ["節別予想.html", "index.html"])
+      fs.copyFileSync(path.join(ROOT, f), path.join(work, f));
+
+    const before = rawOf(fs.readFileSync(path.join(work, "節別予想.html"), "utf8"), "J1");
+
+    /* 第2節の1試合を1週間ずらす（延期の再現） */
+    const jf = path.join(work, "data", SI.files.J1.replace(/^.*[\\/]/, ""));
+    const rows = JSON.parse(fs.readFileSync(jf, "utf8"));
+    const target = rows.find((m) => m.s === SI.upcoming && m.round === 2 && m.date);
+    const d = new Date(target.date + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 7);
+    target.date = d.toISOString().slice(0, 10);
+    fs.writeFileSync(jf, JSON.stringify(rows));
+
+    require("child_process").execFileSync(process.execPath, [path.join(work, "tools", "build.js")],
+      { cwd: work, stdio: "pipe" });
+    const after = rawOf(fs.readFileSync(path.join(work, "節別予想.html"), "utf8"), "J1");
+
+    check("延期を起こしても節の中の並びが変わらない（入力が別の試合に付け替わらない）",
+      Boolean(before) && before === after,
+      before === after ? "" : `${[...(after ?? "")].filter((c, i) => c !== before[i]).length}文字ちがう`);
+
+    /* 引き継ぎが効いていること自体の確認。日付順に並べ直すと本当に動くのか */
+    const wk = rows.filter((m) => m.round === 2);
+    const sorted = [...wk].sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1))
+      .map((m) => m.h + "|" + m.a).join(",");
+    const kept = wk.map((m) => m.h + "|" + m.a).join(",");
+    check("その延期は、日付順に並べ直せば実際に順番が変わるもの（検算が空振りしていない）",
+      sorted !== kept, sorted === kept ? "順番が変わらない延期を選んでしまった" : "");
+  } catch (e) {
+    check("節の並びの検算が走る", false, String(e.message).slice(0, 120));
+  } finally {
+    try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* 消せなくても害はない */ }
+  }
 }
 
 /* ═══════════════════════════════════════════════════ 7. 公開用ページ */
