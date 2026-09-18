@@ -80,18 +80,18 @@ const jst = (iso) => {
       const mark = r.status !== "completed" ? "⏳ 実行中"
         : r.conclusion === "success" ? "✅ 成功"
         : r.conclusion === "cancelled" ? "⏹ 中止" : "❌ 失敗";
-      const how = r.event === "schedule" ? "毎週の自動" : r.event === "workflow_dispatch" ? "手動" : r.event;
+      const how = r.event === "schedule" ? "毎日の自動" : r.event === "workflow_dispatch" ? "手動" : r.event;
       console.log(`  ${mark}  ${jst(r.created_at)}  ${how}`);
     }
     const done = list.filter((r) => r.status === "completed");
     const ok = done.filter((r) => r.conclusion === "success");
     const sched = done.filter((r) => r.event === "schedule");
-    console.log(`\n  成功 ${ok.length}/${done.length}件  うち毎週の自動実行 ${sched.length}件`);
+    console.log(`\n  成功 ${ok.length}/${done.length}件  うち毎日の自動実行 ${sched.length}件`);
     if (done.length && !ok.length) {
       console.log(`  → 失敗の中身: ${list[0].html_url}`);
     }
     if (!sched.length) {
-      console.log("  ℹ まだ手動だけです。毎週の自動実行は次の月曜 12:00(JST) に初めて走ります。");
+      console.log("  ℹ まだ手動だけです。自動実行は次の 12:00(JST) に初めて走ります。");
     }
   }
 

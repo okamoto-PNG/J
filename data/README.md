@@ -224,7 +224,7 @@ PC の電源を落としていても走らせたいとき用です。`.github/wo
 **始め方は [クラウド化手順.md](../クラウド化手順.md) にまとめてあります。**
 
 ```
-毎週月曜 03:00 UTC（＝12:00 JST）
+毎日 03:00 UTC（＝12:00 JST）
   → node tools/auto.js
   → 変わっていたら生成物をコミット
   → publish/site/ を GitHub Pages に公開
