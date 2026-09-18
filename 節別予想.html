@@ -270,7 +270,7 @@
       <button id="shareLink">共有リンクを作る</button>
       <button id="shareJson">予想をコピー用に出す</button>
     </div>
-    <textarea id="shareio" placeholder="ここに出た文字列やリンクを相手に送ってください。受け取った側は、それをここに貼って「読み込む」。" style="margin-top:4px"></textarea>
+    <textarea id="shareio" placeholder="ここに出た文字列やリンクを相手に送ってください。受け取った側は、それをここに貼って「読み込む」。チャットの画面をそのまま何行貼ってもかまいません（何人ぶんでも一度に読み込みます）。" style="margin-top:4px"></textarea>
     <div class="row" style="margin-top:8px">
       <button class="primary" id="shareImp">受け取った予想を読み込む</button>
     </div>
@@ -297,7 +297,16 @@
       共有されるのは<b>あなたの予想と名前だけ</b>です。試合結果・離脱者の設定は入りません。
       相手の入力を上書きすることもありません。<br>
       <b>リンクを開いた人の画面に、あなたの予想が自動で取り込まれます。</b>
-      同じ名前で送り直せば、その人の画面のあなたの予想が新しいものに置き換わります。
+      同じ名前で送り直せば、その人の画面のあなたの予想が新しいものに置き換わります。<br>
+      <b>まとめ貼りができます。</b> チャットの画面を範囲選択してそのまま貼り付ければ、
+      名前・時刻・雑談の行は読み飛ばして、見つかった予想を全員ぶん一度に取り込みます。
+    </div>
+    <div class="note">
+      <b>リンクが短くなりました（版4）。</b>
+      予想していない試合を書かなくなったぶんだけ短くなります。運ぶ中身は今までと同じです。<br>
+      受け取る側は古い形式（版1〜3）もこれまでどおり読めますが、
+      <b>相手が古いページを開いたままだと、あなたの新しいリンクは読めません。</b>
+      その場合は相手にページの再読み込みをしてもらってください。
     </div>
   </section>
 
@@ -2093,9 +2102,9 @@ const sealMessage = (w) =>
    1試合を2文字（36進数の得点2つ）にし、38節×10試合＝760文字の固定長にする。
    使う文字が [0-9a-z.] だけなので、URL にそのまま載せられる。
    ========================================================================== */
-/* 版1 予想だけ / 版2 ＋締切前フラグ / 版3 ＋封印の照合用（salt と封印済みの節）。
-   古い版も読める。 */
-const SHARE_V = "3";
+/* 版1 予想だけ / 版2 ＋締切前フラグ / 版3 ＋封印の照合用（salt と封印済みの節）／
+   版4 ＝版3と同じ中身を短く詰めたもの。受け取り側は版1〜4のどれでも読める。 */
+const SHARE_V = "4";
 const b36 = (n) => Math.max(0, Math.min(35, n)).toString(36);
 
 function encodePicks(picks) {
@@ -2160,14 +2169,134 @@ function decodeSealed(s) {
   return out;
 }
 
+/* ==========================================================================
+   版4の詰め方（中身は版3と同じ。短くしただけ）
+
+   版3までは 38節×10試合ぶんを必ず全部書いていた。予想していない試合も ".." と
+   書くので、1節だけ予想した状態でもリンクが1,265文字になり、チャットに貼ると
+   何行にも折り返されて扱いづらい。版4は「書かない部分を詰める」。
+
+     body   … 380枠を順に見て、予想がある枠は2文字、無い枠が続いたら "-"＋個数2文字。
+              2文字は得点の組を36進数2桁にしたもの（hg*36+ag。0〜1295がちょうど収まる）。
+              末尾の空きは書かない（読む側は「そこから先は予想なし」とみなす）。
+     flags  … 締切前(o)/締切後(x)/不明(.) を、予想がある枠だけ並べて連長圧縮する。
+              1節ぶん全部が締切前なら "o0a"（o が10個）の3文字で済む。
+     sealed … 38節の 1/0 を16進10文字に詰める（版3は38文字）。
+
+   使う文字は [0-9a-z.-] だけなので、URL にそのまま載る。
+   得点の範囲（0〜35）も、運べる情報も版3と変えていない。
+   ========================================================================== */
+/** 36進数を桁数固定で書く。個数にも得点にもこれを使う */
+const b36p = (n, w) => Math.max(0, Math.round(n)).toString(36).padStart(w, "0");
+const RUN_MAX = 1295;                    // 36進数2桁で書ける最大
+
+function encodeBody4(picks) {
+  const N = WEEKS * PER_WEEK;
+  let s = "", gap = 0;
+  /* 空きは貯めておき、次の予想が来た時点でまとめて書く */
+  const flushGap = () => {
+    while (gap > 0) { const n = Math.min(gap, RUN_MAX); s += "-" + b36p(n, 2); gap -= n; }
+  };
+  for (let k = 0; k < N; k++) {
+    const q = picks[`${Math.floor(k / PER_WEEK) + 1}.${k % PER_WEEK}`];
+    if (!q) { gap++; continue; }
+    flushGap();
+    s += b36p(Math.max(0, Math.min(35, q[0])) * 36 + Math.max(0, Math.min(35, q[1])), 2);
+  }
+  return s;                              // 末尾の空きは書かない。これが短さの大半
+}
+function decodeBody4(s) {
+  if (typeof s !== "string") return null;
+  const N = WEEKS * PER_WEEK, out = {};
+  let k = 0, at = 0;
+  while (at < s.length) {
+    if (s[at] === "-") {                 // 空きの連続
+      const c = s.slice(at + 1, at + 3);
+      if (!/^[0-9a-z]{2}$/.test(c)) return null;
+      k += parseInt(c, 36); at += 3;
+    } else {                             // 予想1つ
+      const c = s.slice(at, at + 2);
+      if (!/^[0-9a-z]{2}$/.test(c)) return null;
+      if (k >= N) return null;
+      const v = parseInt(c, 36);
+      out[`${Math.floor(k / PER_WEEK) + 1}.${k % PER_WEEK}`] = [Math.floor(v / 36), v % 36];
+      k++; at += 2;
+    }
+    if (k > N) return null;              // 枠をはみ出す指定は壊れている
+  }
+  return out;
+}
+
+/** 締切前フラグ。予想がある枠だけを順に並べて連長圧縮する */
+function encodeFlags4(picks, pickAt) {
+  const N = WEEKS * PER_WEEK;
+  let s = "", cur = "", run = 0;
+  const flushRun = () => {
+    while (run > 0) { const n = Math.min(run, RUN_MAX); s += cur + b36p(n, 2); run -= n; }
+  };
+  for (let k = 0; k < N; k++) {
+    const key = `${Math.floor(k / PER_WEEK) + 1}.${k % PER_WEEK}`;
+    if (!picks[key]) continue;
+    let f = onTime(key, pickAt?.[key]);
+    if (f !== "o" && f !== "x") f = ".";
+    if (f !== cur) { flushRun(); cur = f; }
+    run++;
+  }
+  flushRun();
+  return s;
+}
+/** 読む側は picks が要る。どの枠のフラグかは「予想がある枠の並び」で決まるため */
+function decodeFlags4(s, picks) {
+  if (typeof s !== "string") return null;
+  const N = WEEKS * PER_WEEK, keys = [];
+  for (let k = 0; k < N; k++) {
+    const key = `${Math.floor(k / PER_WEEK) + 1}.${k % PER_WEEK}`;
+    if (picks[key]) keys.push(key);
+  }
+  const out = {};
+  let idx = 0, at = 0;
+  while (at < s.length) {
+    const f = s[at], c = s.slice(at + 1, at + 3);
+    if ((f !== "o" && f !== "x" && f !== ".") || !/^[0-9a-z]{2}$/.test(c)) return null;
+    const n = parseInt(c, 36);
+    for (let j = 0; j < n; j++) {
+      const key = keys[idx++];
+      if (key === undefined) return null; // 予想の数より多いフラグは壊れている
+      if (f !== ".") out[key] = f;        // "." は不明。版2・版3と同じく入れない
+    }
+    at += 3;
+  }
+  return out;
+}
+
+/** 封印済みの節。38個の 1/0 を16進10文字に詰める */
+const encodeSealed4 = (sealed) => {
+  let s = "";
+  for (let i = 0; i < WEEKS; i += 4) {
+    let v = 0;
+    for (let j = 0; j < 4; j++) if (sealed[String(i + j + 1)]) v |= 1 << (3 - j);
+    s += v.toString(16);
+  }
+  return s;
+};
+function decodeSealed4(s) {
+  const need = Math.ceil(WEEKS / 4);
+  if (typeof s !== "string" || s.length !== need || /[^0-9a-f]/.test(s)) return null;
+  const out = {};
+  for (let i = 0; i < WEEKS; i++) {
+    if (parseInt(s[i >> 2], 16) & (1 << (3 - (i % 4)))) out[String(i + 1)] = 1;
+  }
+  return out;
+}
+
 /** 共有文字列。名前に記号が入っても壊れないよう名前だけURIエンコードする */
 const shareString = () => [
   SHARE_V, LG, encodeURIComponent(ME.name.trim() || "名前なし"),
-  encodePicks(STATE.picks), encodeFlags(STATE.picks, STATE.pickAt),
-  ME.salt || "0".repeat(16), encodeSealed(STATE.sealed),
+  encodeBody4(STATE.picks), encodeFlags4(STATE.picks, STATE.pickAt),
+  ME.salt || "0".repeat(16), encodeSealed4(STATE.sealed),
 ].join("~");
 
-const SHARE_PARTS = { 1: 4, 2: 5, 3: 7 };
+const SHARE_PARTS = { 1: 4, 2: 5, 3: 7, 4: 7 };
 function parseShare(text) {
   const raw = String(text ?? "").trim();
   const body = raw.includes("#p=") ? raw.slice(raw.indexOf("#p=") + 3) : raw;
@@ -2176,16 +2305,16 @@ function parseShare(text) {
   if (!SHARE_PARTS[v] || parts.length !== SHARE_PARTS[v]) return null;
   const [, lg, name, slots, flagStr, salt, sealStr] = parts;
   if (!LEAGUES[lg]) return null;
-  const picks = decodePicks(slots);
+  const picks = v === "4" ? decodeBody4(slots) : decodePicks(slots);
   if (!picks) return null;
   /* 版1にはフラグが無い。締切前かどうか分からないので空にする（採点では "?" 扱い）*/
-  const flags = v === "1" ? {} : decodeFlags(flagStr);
+  const flags = v === "1" ? {} : v === "4" ? decodeFlags4(flagStr, picks) : decodeFlags(flagStr);
   if (flags === null) return null;
-  /* 版3だけ封印の照合ができる。古い版は salt が無いので照合しない */
+  /* 版3・版4だけ封印の照合ができる。古い版は salt が無いので照合しない */
   let sealed = {}, mySalt = "";
-  if (v === "3") {
+  if (v === "3" || v === "4") {
     if (!/^[0-9a-f]{16}$/.test(salt)) return null;
-    sealed = decodeSealed(sealStr);
+    sealed = v === "4" ? decodeSealed4(sealStr) : decodeSealed(sealStr);
     if (sealed === null) return null;
     mySalt = salt;
   }
@@ -2227,6 +2356,38 @@ function importShare(text) {
     { picks: got.picks, flags: got.flags, salt: got.salt, sealed: got.sealed };
   save();
   return got;
+}
+
+/* 貼り付けから共有文字列を拾うための下ごしらえ。
+   チャットからコピーすると名前・時刻・雑談が一緒に付いてくるので、
+   行を空白で割った語ごとに試し、通ったものだけ採用する。 */
+const CLEAN_HEAD = /^[^0-9A-Za-z#]+/;            // 行頭の引用符・記号
+const CLEAN_TAIL = /[^0-9A-Za-z.%_~-]+$/;       // 行末の句点・閉じ括弧
+
+/**
+ * 貼られた文字列から共有文字列を全部拾って取り込む（まとめ貼り）。
+ * 1人ぶんだけ貼られたときも同じ道を通る。
+ *   done    … 取り込んだ人 [{ name, n, lg }]
+ *   self    … 自分と同じ名前だったので取り込まなかった名前
+ *   skipped … 予想が1つも見つからなかった行の数
+ */
+function importShareAll(text) {
+  const done = [], self = [];
+  let skipped = 0;
+  for (const line of String(text ?? "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let hit = null;
+    for (const tok of line.split(/\s+/)) {
+      const t = tok.replace(CLEAN_HEAD, "").replace(CLEAN_TAIL, "");
+      if (!t.includes("~")) continue;            // 共有文字列は必ず ~ で区切られている
+      hit = importShare(t);
+      if (hit) break;
+    }
+    if (!hit) { skipped++; continue; }
+    if (hit.self) self.push(hit.name);
+    else done.push({ name: hit.name, n: Object.keys(hit.picks).length, lg: hit.lg });
+  }
+  return { done, self, skipped };
 }
 
 /** リンクで開かれたときは、その予想を取り込んでから始める */
@@ -2977,20 +3138,27 @@ $("codeChk").addEventListener("click", () => {
 $("codeIn").addEventListener("keydown", (e) => { if (e.key === "Enter") $("codeChk").click(); });
 
 $("shareImp").addEventListener("click", () => {
-  const got = importShare($("shareio").value);
-  if (!got) {
+  const r = importShareAll($("shareio").value);
+  if (!r.done.length && !r.self.length) {
     $("shareio").value = "読み取れませんでした。相手から届いたリンク（#p=… を含む全体）か、" +
-      "「予想をコピー用に出す」で出た文字列をそのまま貼ってください。";
+      "「予想をコピー用に出す」で出た文字列を貼ってください。" +
+      "チャットの画面を何行まとめて貼ってもかまいません（予想でない行は読み飛ばします）。";
     return;
   }
-  if (got.self) {
-    $("shareio").value = `「${got.name}」はあなた自身の名前です。` +
-      `自分の予想は上書きしません。名前を変えてから読み込んでください。`;
-    return;
+  /* いま見ているリーグのぶんが1つでもあればそのまま。無ければ最初の1人に合わせる */
+  if (r.done.length && !r.done.some((d) => d.lg === LG)) {
+    useLeague(r.done[0].lg); bindLeague(); refit();
   }
-  const n = Object.keys(got.picks).length;
-  if (got.lg !== LG) { useLeague(got.lg); bindLeague(); refit(); }
-  $("shareio").value = `${got.name} さんの予想 ${n}試合を読み込みました（${got.lg}）。`;
+  const msg = [];
+  if (r.done.length) {
+    msg.push(`${r.done.length}人ぶん読み込みました。`);
+    for (const d of r.done) msg.push(`  ${d.name}（${d.n}試合・${d.lg}）`);
+  }
+  if (r.self.length) {
+    msg.push(`「${r.self.join("」「")}」はあなた自身の名前なので取り込みませんでした。`);
+  }
+  if (r.skipped) msg.push(`予想ではない ${r.skipped}行 は読み飛ばしました。`);
+  $("shareio").value = msg.join("\n");
   renderAll();
 });
 

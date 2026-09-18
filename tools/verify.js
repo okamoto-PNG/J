@@ -608,6 +608,8 @@ function loadAppScoring() {
       scoreboard, fitBefore, baseRates, outcomeOf,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
+      encodeBody4, decodeBody4, encodeFlags4, decodeFlags4, encodeSealed4, decodeSealed4,
+      importShareAll,
       sha256Hex, sealPayload, sealCodeOf, myCode, ensureSalt, roundDeadline, roundClosed,
       isSealed, sealRound, unsealRound, sealMessage, checkCode,
       parseShare, shareString, shareLink, importShare };`;
@@ -638,6 +640,92 @@ if (!sc) {
   check("リンク形式（#p=…）からも読める", canon(sc.parseShare(sc.shareLink())?.picks ?? {}) === canon(sc.STATE.picks));
   check("壊れた共有文字列は拒否する",
     sc.parseShare("ゴミ") === null && sc.parseShare("1~J9~a~" + enc) === null);
+
+  /* --- 版4（短い共有文字列）---
+     「版3と同じ中身を詰め直しただけ」が版4の主張なので、
+     往復・版3との一致・短さ・壊れた入力の拒否を見る。 */
+  {
+    const v4sample = { "1.0": [2, 1], "1.9": [0, 0], "20.4": [10, 35], "38.9": [3, 12] };
+    const b4 = sc.encodeBody4(v4sample);
+    check("版4の本体が往復して一致する", canon(sc.decodeBody4(b4)) === canon(v4sample));
+    check("版4の本体が URL に載せられる文字だけ", /^[0-9a-z.-]+$/.test(b4), b4.slice(0, 20) + "…");
+    check("版4も得点0〜35を運べる（版3と同じ範囲）",
+      sc.decodeBody4(sc.encodeBody4({ "1.0": [0, 35], "1.1": [35, 0] }))["1.0"][1] === 35);
+    check("枠をはみ出す版4の本体は拒否する", sc.decodeBody4("-zz-zz-zz-zz-zz") === null);
+    check("桁が足りない版4の本体は拒否する",
+      sc.decodeBody4("2") === null && sc.decodeBody4("-1") === null);
+
+    const sl = { 1: 1, 17: 1, 38: 1 };
+    check(`版4の封印済みの節が${Math.ceil(sc.WEEKS / 4)}文字`,
+      sc.encodeSealed4(sl).length === Math.ceil(sc.WEEKS / 4), sc.encodeSealed4(sl));
+    check("版4の封印済みの節が往復して一致する",
+      canon(sc.decodeSealed4(sc.encodeSealed4(sl))) === canon(sl));
+    check("長さの違う版4の封印は拒否する", sc.decodeSealed4("0") === null);
+
+    const fp = { "1.0": [1, 0], "1.1": [1, 0], "1.2": [1, 0] };
+    const at0 = { "1.0": 0, "1.1": 0, "1.2": 0 };                 // 3つとも締切後
+    const f4 = sc.encodeFlags4(fp, at0);
+    check("版4のフラグが連長圧縮される（3試合ぶんが3文字）", f4.length === 3, f4);
+    check("版4のフラグが版3と同じ中身になる",
+      canon(sc.decodeFlags4(f4, fp)) === canon(sc.decodeFlags(sc.encodeFlags(fp, at0))));
+    check("予想の数より多い版4のフラグは拒否する", sc.decodeFlags4("x0z", fp) === null);
+  }
+
+  /* 実際に出る共有文字列で、版3と版4を突き合わせる */
+  {
+    for (const k of Object.keys(sc.STATE.picks)) delete sc.STATE.picks[k];
+    for (let i = 0; i < sc.PER_WEEK; i++) sc.STATE.picks[`1.${i}`] = [i % 4, (i + 1) % 3];
+    const v4 = sc.shareString();
+    const v3 = ["3", sc.LG, encodeURIComponent(sc.ME.name),
+      sc.encodePicks(sc.STATE.picks), sc.encodeFlags(sc.STATE.picks, sc.STATE.pickAt),
+      sc.ME.salt || "0".repeat(16), sc.encodeSealed(sc.STATE.sealed)].join("~");
+    check("いま出す共有文字列は版4", v4.startsWith("4~"), v4.slice(0, 2));
+    check("版4は版3より短い（1節ぶんの予想で）",
+      v4.length < v3.length, `版4 ${v4.length}文字 / 版3 ${v3.length}文字`);
+    const p4 = sc.parseShare(v4), p3 = sc.parseShare(v3);
+    check("版4と版3で読み取れる予想が同じ", canon(p4.picks) === canon(p3.picks));
+    check("版4と版3で読み取れるフラグが同じ", canon(p4.flags) === canon(p3.flags));
+    check("版4でも salt と封印済みの節が往復する",
+      p4.salt === p3.salt && canon(p4.sealed) === canon(p3.sealed));
+    check("版4もリンク形式（#p=…）から読める",
+      canon(sc.parseShare("https://example.test/a.html#p=" + v4)?.picks ?? {}) === canon(p4.picks));
+    check("壊れた版4は拒否する",
+      sc.parseShare(v4.replace("4~J1~", "4~J9~")) === null &&
+      sc.parseShare(v4.replace(/~[0-9a-f]{16}~/, "~zzzz~")) === null);
+  }
+
+  /* --- まとめ貼り（チャットの画面をそのまま貼る）--- */
+  {
+    const mk = (nm, picks) => ["3", "J1", encodeURIComponent(nm), sc.encodePicks(picks),
+      sc.encodeFlags(picks, {}), "abcdef0123456789", sc.encodeSealed({})].join("~");
+    const paste = [
+      "たろう 20:14",
+      "https://okamoto.example/J/#p=" + mk("たろう", { "2.0": [1, 0] }),
+      "",
+      "じろう 20:31",
+      mk("じろう", { "2.0": [0, 2], "2.1": [1, 1] }),
+      "さぶろう 21:02",
+      "今週は堅く行くわ " + mk("さぶろう", { "2.2": [2, 2] }) + "。",
+      "しろう 21:05",
+      "明日出す",
+    ].join("\n");
+    const r = sc.importShareAll(paste);
+    check("まとめ貼りで3人ぶんを一度に取り込む", r.done.length === 3,
+      r.done.map((d) => d.name + ":" + d.n).join(" / "));
+    check("まとめ貼りで名前・時刻・雑談の行は読み飛ばす", r.skipped === 5, String(r.skipped));
+    check("まとめ貼りした予想が PEERS に入る",
+      sc.PEERS.J1["たろう"]?.picks?.["2.0"]?.[0] === 1 &&
+      sc.PEERS.J1["じろう"]?.picks?.["2.1"]?.[1] === 1 &&
+      sc.PEERS.J1["さぶろう"]?.picks?.["2.2"]?.[0] === 2);
+    check("行末に句点が付いていても読める", r.done.some((d) => d.name === "さぶろう"));
+    const self = sc.importShareAll(mk(sc.ME.name, { "3.0": [9, 9] }));
+    check("まとめ貼りでも自分と同じ名前は取り込まない",
+      self.done.length === 0 && self.self.length === 1, self.self.join(","));
+    check("予想が1つも無い貼り付けは何も取り込まない", (() => {
+      const z = sc.importShareAll("おつかれ\n明日やる");
+      return z.done.length === 0 && z.self.length === 0 && z.skipped === 2;
+    })());
+  }
 
   /* --- 締切（キックオフ）--- */
   const dl10 = sc.deadlineOf(1, 0);
