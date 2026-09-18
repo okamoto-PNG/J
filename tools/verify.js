@@ -605,7 +605,8 @@ function loadAppScoring() {
       get LG(){ return LG; }, get STATE(){ return STATE; }, get STORE(){ return STORE; },
       get PEERS(){ return PEERS; }, get ME(){ return ME; }, set ME(v){ ME = v; },
       get WEEKS(){ return WEEKS; }, get PER_WEEK(){ return PER_WEEK; },
-      scoreboard, fitBefore, baseRates, outcomeOf,
+      get TEAMS(){ return TEAMS; }, get FIXTURES(){ return FIXTURES; },
+      scoreboard, fitBefore, baseRates, outcomeOf, recentForm,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
       encodeBody4, decodeBody4, encodeFlags4, decodeFlags4, encodeSealed4, decodeSealed4,
@@ -640,6 +641,45 @@ if (!sc) {
   check("リンク形式（#p=…）からも読める", canon(sc.parseShare(sc.shareLink())?.picks ?? {}) === canon(sc.STATE.picks));
   check("壊れた共有文字列は拒否する",
     sc.parseShare("ゴミ") === null && sc.parseShare("1~J9~a~" + enc) === null);
+
+  /* --- 直近5試合（順位表の丸）--- */
+  {
+    for (const k of Object.keys(sc.STATE.results)) delete sc.STATE.results[k];
+    const f1 = sc.FIXTURES[0][0];                       // 第1節の1試合目
+    sc.STATE.results["1.0"] = [2, 0];                   // ホームの勝ち
+    sc.STATE.results["2.0"] = [0, 0];                   // 引き分け
+    const f2 = sc.FIXTURES[1][0];
+    const fm = sc.recentForm();
+    check("直近5：勝ちが w、負けが l になる",
+      fm[f1.h][0].r === "w" && fm[f1.a][0].r === "l",
+      `${f1.h}=${fm[f1.h][0].r} / ${f1.a}=${fm[f1.a][0].r}`);
+    check("直近5：引き分けが d になる",
+      fm[f2.h].at(-1).r === "d" && fm[f2.a].at(-1).r === "d");
+    check("直近5：得点はそのクラブから見た向きで入る",
+      fm[f1.h][0].gf === 2 && fm[f1.h][0].ga === 0 &&
+      fm[f1.a][0].gf === 0 && fm[f1.a][0].ga === 2);
+    check("直近5：ホーム・アウェイと相手が入る",
+      fm[f1.h][0].home === true && fm[f1.h][0].opp === f1.a &&
+      fm[f1.a][0].home === false && fm[f1.a][0].opp === f1.h);
+    check("直近5：結果が無いクラブは空", (() => {
+      const used = new Set([f1.h, f1.a, f2.h, f2.a]);
+      return sc.TEAMS.filter((c) => !used.has(c)).every((c) => fm[c].length === 0);
+    })());
+
+    /* 6節ぶん入れて、古いほうが落ちること・並びが節の順であることを見る */
+    for (const k of Object.keys(sc.STATE.results)) delete sc.STATE.results[k];
+    for (let w = 1; w <= 6; w++) {
+      for (let i = 0; i < sc.PER_WEEK; i++) sc.STATE.results[`${w}.${i}`] = [1, 0];
+    }
+    const fm6 = sc.recentForm();
+    const some = sc.TEAMS[0];
+    check("直近5：6試合入れても5件に切られる", fm6[some].length === 5, String(fm6[some].length));
+    check("直近5：節の早い順に並ぶ（末尾が最新）",
+      fm6[some].map((m) => m.w).join(",") === "2,3,4,5,6", fm6[some].map((m) => m.w).join(","));
+    check("直近5：件数を指定できる", sc.recentForm(3)[some].length === 3);
+    for (const k of Object.keys(sc.STATE.results)) delete sc.STATE.results[k];
+    sc.refit();
+  }
 
   /* --- 版4（短い共有文字列）---
      「版3と同じ中身を詰め直しただけ」が版4の主張なので、

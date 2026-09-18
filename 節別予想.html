@@ -17,6 +17,8 @@
     --bg:#f5f6f8; --panel:#fff; --panel2:#fafbfc; --text:#16191d; --muted:#6b7280;
     --line:#e3e6ea; --accent:#1d4ed8; --home:#2563eb; --draw:#9ca3af; --away:#dc2626;
     --good:#16a34a; --warn:#d97706; --r:12px;
+    /* 直近5試合の丸。丸の中を塗るので、明暗どちらのテーマでも同じ色で足りる */
+    --win:#16a34a; --drw:#6b7280; --los:#dc2626;
   }
   /* OS の設定 */
   @media (prefers-color-scheme:dark){
@@ -114,6 +116,16 @@
   .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   tr.acl td:first-child{box-shadow:inset 3px 0 0 var(--good)}
   tr.rel td:first-child{box-shadow:inset 3px 0 0 var(--away)}
+
+  /* 直近5試合。色が見分けにくい人にも伝わるよう、丸の中に 勝/分/敗 の字を入れる */
+  .form{display:inline-flex;gap:3px}
+  .form i{width:17px;height:17px;border-radius:50%;font-style:normal;font-weight:700;
+    font-size:.6rem;line-height:1;color:#fff;display:inline-flex;
+    align-items:center;justify-content:center}
+  .form i.w{background:var(--win)}
+  .form i.d{background:var(--drw)}
+  .form i.l{background:var(--los)}
+  .formnon{color:var(--muted)}            /* まだ結果が1つも無いクラブ */
 
   .bar{background:var(--line);border-radius:3px;height:8px;overflow:hidden;min-width:56px}
   .bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
@@ -2435,6 +2447,35 @@ function standings() {
   return rows;
 }
 
+/**
+ * 各クラブの直近 n 試合の勝敗。順位表の「直近5」に出す。
+ * 並びは節の早い順（＝配列の末尾がいちばん新しい試合）。
+ * 日付ではなく節の順で並べている。結果は節ごとに入れるものなので、
+ * 同じ節の中の前後は表示上の意味を持たない。
+ */
+function recentForm(n = 5) {
+  const out = {};
+  for (const c of TEAMS) out[c] = [];
+  const keys = Object.keys(STATE.results).sort((a, b) => {
+    const [aw, ai] = a.split(".").map(Number), [bw, bi] = b.split(".").map(Number);
+    return aw - bw || ai - bi;
+  });
+  for (const k of keys) {
+    const [w, i] = k.split(".").map(Number);
+    const f = FIXTURES[w - 1]?.[i];
+    if (!f) continue;
+    const [hg, ag] = STATE.results[k];
+    const put = (c, gf, ga, opp, home) => {
+      if (!out[c]) return;                 // 今季いないクラブの結果は無視する
+      out[c].push({ w, opp, home, gf, ga, r: gf > ga ? "w" : gf < ga ? "l" : "d" });
+    };
+    put(f.h, hg, ag, f.a, true);
+    put(f.a, ag, hg, f.h, false);
+  }
+  for (const c of TEAMS) out[c] = out[c].slice(-n);
+  return out;
+}
+
 /* ==========================================================================
    4) モンテカルロ（残り全日程）
    ========================================================================== */
@@ -2765,13 +2806,25 @@ function onScore(e) {
   save(); refit(); renderAll();
 }
 
+const FORMLAB = { w: "勝", d: "分", l: "敗" };
+/** 直近5試合を丸で出す。中の字は 勝/分/敗、乗せると相手とスコアが出る */
+function formCell(list) {
+  if (!list || !list.length) return '<span class="formnon">—</span>';
+  const one = (m) =>
+    '<i class="' + m.r + '" title="第' + m.w + "節 " +
+    esc(FULL[m.opp] ?? m.opp) + "戦（" + (m.home ? "ホーム" : "アウェイ") + "） " +
+    m.gf + "-" + m.ga + '">' + FORMLAB[m.r] + "</i>";
+  return '<span class="form">' + list.map(one).join("") + "</span>";
+}
+
 function renderTable() {
   const rows = standings();
+  const form = recentForm();
   const any = playedCount() > 0;
   $("table").innerHTML = `
     <table>
       <thead><tr><th>#</th><th>クラブ</th><th>勝点</th><th>試合</th><th>勝</th><th>分</th><th>敗</th>
-        <th>得点</th><th>失点</th><th>差</th><th>戦力</th></tr></thead>
+        <th>得点</th><th>失点</th><th>差</th><th>戦力</th><th>直近5</th></tr></thead>
       <tbody>${rows.map((r, i) => {
         const rt = ratingOf(STATE.fit, r.c);
         const power = ((rt.atkH + rt.atkA) / 2) - ((rt.defH + rt.defA) / 2);
@@ -2781,6 +2834,7 @@ function renderTable() {
           <td><b>${r.pts}</b></td><td>${r.n}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td>
           <td>${r.gf}</td><td>${r.ga}</td><td class="${r.gd > 0 ? "up" : r.gd < 0 ? "down" : ""}">${r.gd > 0 ? "+" : ""}${r.gd}</td>
           <td class="${power > 0 ? "up" : "down"}">${power > 0 ? "+" : ""}${power.toFixed(2)}</td>
+          <td>${formCell(form[r.c])}</td>
         </tr>`;
       }).join("")}</tbody>
     </table>
@@ -2789,7 +2843,8 @@ function renderTable() {
 
 function renderTableNote() {
   const el = $("tablenote");
-  if (el) el.innerHTML = `緑帯は上位3クラブ（${LAB().topNote}）、赤帯は下位3クラブ（${LAB().botNote}）です。`;
+  if (el) el.innerHTML = `緑帯は上位3クラブ（${LAB().topNote}）、赤帯は下位3クラブ（${LAB().botNote}）です。` +
+    `「直近5」は<b>左が古く、右が新しい</b>試合で、勝=緑・分=灰・敗=赤。丸に乗せると相手とスコアが出ます。`;
 }
 
 function renderSim() {
