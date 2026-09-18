@@ -320,7 +320,9 @@
       <b>リンクを開いた人の画面に、あなたの予想が自動で取り込まれます。</b>
       同じ名前で送り直せば、その人の画面のあなたの予想が新しいものに置き換わります。<br>
       <b>まとめ貼りができます。</b> チャットの画面を範囲選択してそのまま貼り付ければ、
-      名前・時刻・雑談の行は読み飛ばして、見つかった予想を全員ぶん一度に取り込みます。
+      名前・時刻・雑談の行は読み飛ばして、見つかった予想を全員ぶん一度に取り込みます。<br>
+      <b>WINNERの倍率（<code>o1~</code> で始まる文字列）もここに貼れます。</b>
+      倍率は予想とは別枠なので、貼ってもあなたの予想・結果は変わりません。
     </div>
     <div class="note">
       <b>リンクが短くなりました（版4）。</b>
@@ -1719,7 +1721,118 @@ function oddsOf(key) {
   const inv = o.map((x) => 1 / x);
   const sum = inv[0] + inv[1] + inv[2];
   if (!(sum > 0)) return null;
-  return { o, p: inv.map((x) => x / sum), payout: 1 / sum };
+  return { o, p: inv.map((x) => x / sum), payout: 1 / sum, at: STATE.oddsAt?.[key] ?? null };
+}
+
+/** epoch ms → 「9/19 18:40」（日本時間）。端末のタイムゾーンに左右されないよう自分で足す */
+function jstLabel(ms) {
+  if (!Number.isFinite(ms)) return "";
+  const j = new Date(ms + JST_OFFSET);
+  return `${j.getUTCMonth() + 1}/${j.getUTCDate()} ` +
+    `${String(j.getUTCHours()).padStart(2, "0")}:${String(j.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+/* --------------------------------------------------------------------------
+   倍率を配る（予想の共有とは別枠）
+
+   ★予想は「その人の意見」なので人ごとに何組でもあるが、
+     倍率は「全員が見る同じ事実」なので1組しかない。
+     同じ入れ物に混ぜると、受け取った側の予想を書き換えることになる（30-1）。
+     だから別の文字列にして、受け取り側も別の場所に入れる。
+
+     o1~J1~3~<取得時刻36進>~<試合番号>:<勝>/<分>/<負>;…
+
+   ★倍率は販売締切まで動くので、**いつ時点か**を必ず一緒に運ぶ。
+     運ぶのは「コピーした時刻」ではなく「アプリに入れた時刻」なので、
+     コピーしたらすぐ入れてもらう前提（画面にそう書いてある）。
+   -------------------------------------------------------------------------- */
+const ODDS_V = "o1";
+
+/** その節の倍率を、配れる1行にする。1つも入っていなければ null */
+function oddsString(w) {
+  const rows = [];
+  let at = 0;
+  for (let i = 0; i < PER_WEEK; i++) {
+    const key = `${w}.${i}`;
+    const od = oddsOf(key);
+    if (!od) continue;
+    rows.push(i + ":" + od.o.map((x) => x.toFixed(2)).join("/"));
+    at = Math.max(at, STATE.oddsAt[key] ?? 0);
+  }
+  if (!rows.length) return null;
+  return [ODDS_V, LG, String(w), (at || now()).toString(36), rows.join(";")].join("~");
+}
+
+function parseOddsShare(text) {
+  const parts = String(text ?? "").trim().split("~");
+  if (parts.length !== 5 || parts[0] !== ODDS_V) return null;
+  const [, lg, ws, ats, body] = parts;
+  if (!LEAGUES[lg]) return null;
+  const w = Number(ws);
+  if (!Number.isInteger(w) || w < 1 || w > WEEKS) return null;
+  const at = parseInt(ats, 36);
+  if (!Number.isFinite(at) || at <= 0) return null;
+  const odds = {};
+  for (const chunk of body.split(";")) {
+    if (!chunk) continue;
+    const m = chunk.match(/^(\d{1,2}):(\d{1,4}(?:\.\d{1,2})?)\/(\d{1,4}(?:\.\d{1,2})?)\/(\d{1,4}(?:\.\d{1,2})?)$/);
+    if (!m) return null;
+    const i = Number(m[1]);
+    if (i < 0 || i >= PER_WEEK) return null;
+    const o = [m[2], m[3], m[4]].map(Number);
+    if (!o.every((x) => Number.isFinite(x) && x > 0)) return null;
+    odds[`${w}.${i}`] = o.map((x) => Math.round(x * 100) / 100);
+  }
+  if (!Object.keys(odds).length) return null;
+  return { lg, w, at, odds };
+}
+
+/** 受け取った倍率を取り込む。予想にも結果にも触らない */
+function importOdds(text) {
+  const got = parseOddsShare(text);
+  if (!got) return null;
+  const st = (STORE[got.lg] ??= blank());
+  st.odds ??= {}; st.oddsAt ??= {};
+  for (const [k, v] of Object.entries(got.odds)) { st.odds[k] = v; st.oddsAt[k] = got.at; }
+  save();
+  return { ...got, n: Object.keys(got.odds).length };
+}
+
+/* --------------------------------------------------------------------------
+   貼られた文章から倍率を拾う（WINNER の画面をそのままコピーしてくる用）
+
+   相手のサイトの形は決め打ちできないので、行ごとに
+   「その節のクラブが2つ出てくる」＋「小数が3つある」だけを頼りに拾う。
+   並び（勝・分・負の順）はサイトによって違いうるので画面で選べるようにし、
+   **必ず一覧を出して確認してもらってから**入れる。黙って入れない。
+   -------------------------------------------------------------------------- */
+function scrapeOdds(text, w, order) {
+  if (!FIXTURES[w - 1]) return [];
+  const names = [];
+  for (const c of TEAMS) { names.push([c, c]); if (FULL[c]) names.push([FULL[c], c]); }
+  names.sort((a, b) => b[0].length - a[0].length);   // 長い名前から当てる（略称に食われないよう）
+  const out = new Map();
+  for (const line of String(text ?? "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const found = [];
+    let rest = line;
+    for (const [nm2, c] of names) {
+      if (found.length >= 2) break;
+      if (rest.includes(nm2) && !found.includes(c)) { found.push(c); rest = rest.split(nm2).join(" "); }
+    }
+    if (found.length !== 2) continue;
+    const i = FIXTURES[w - 1].findIndex((f) => found.includes(f.h) && found.includes(f.a));
+    if (i < 0) continue;
+    let nums = rest.match(/\d{1,3}\.\d{1,2}/g) ?? [];
+    if (nums.length < 3) nums = rest.match(/\d{1,3}(?:\.\d{1,2})?/g) ?? [];
+    if (nums.length < 3) continue;
+    const v = nums.slice(0, 3).map(Number);
+    const o = order === "had" ? [v[0], v[2], v[1]] : v;
+    if (!o.every((x) => Number.isFinite(x) && x > 0)) continue;
+    const f = FIXTURES[w - 1][i];
+    out.set(i, { i, h: f.h, a: f.a, o: o.map((x) => Math.round(x * 100) / 100) });
+  }
+  return [...out.values()].sort((x, y) => x.i - y.i);
 }
 
 /* ==========================================================================
@@ -1730,10 +1843,11 @@ const KEY = "jleague-2627-weekly";
 /* リーグごとに別々の入力を持つ。STORE が保存される中身で、
    STATE は「いま表示しているリーグ」の作業用。中身は同じオブジェクトを指すので、
    STATE.results を書き換えれば STORE 側にも反映される。 */
-const blank = () => ({ results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {}, odds: {} });
+const blank = () => ({ results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {},
+                       odds: {}, oddsAt: {} });
 const STORE = { J1: blank(), J2: blank() };
-const STATE = { results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {}, odds: {},
-                fit: null, sim: null };
+const STATE = { results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {},
+                odds: {}, oddsAt: {}, fit: null, sim: null };
 
 /* 自分の名前と、読み込んだ他の人の予想。
    results（実際の結果）とは別物なので混ぜないこと。
@@ -1750,8 +1864,10 @@ function bindLeague() {
   st.pickAt ??= {};
   st.sealed ??= {};
   st.odds ??= {};                               // 倍率を入れる前の保存にも対応する
+  st.oddsAt ??= {};
   STATE.results = st.results;
   STATE.odds = st.odds;
+  STATE.oddsAt = st.oddsAt;
   STATE.cond = st.cond;
   STATE.picks = st.picks;
   STATE.pickAt = st.pickAt;
@@ -2422,22 +2538,25 @@ const CLEAN_TAIL = /[^0-9A-Za-z.%_~-]+$/;       // 行末の句点・閉じ括�
  *   skipped … 予想が1つも見つからなかった行の数
  */
 function importShareAll(text) {
-  const done = [], self = [];
+  const done = [], self = [], odds = [];
   let skipped = 0;
   for (const line of String(text ?? "").split(/\r?\n/)) {
     if (!line.trim()) continue;
-    let hit = null;
+    let hit = null, od = null;
     for (const tok of line.split(/\s+/)) {
       const t = tok.replace(CLEAN_HEAD, "").replace(CLEAN_TAIL, "");
       if (!t.includes("~")) continue;            // 共有文字列は必ず ~ で区切られている
+      od = importOdds(t);                        // 倍率（予想とは別枠。中身に触らない）
+      if (od) break;
       hit = importShare(t);
       if (hit) break;
     }
+    if (od) { odds.push(od); continue; }
     if (!hit) { skipped++; continue; }
     if (hit.self) self.push(hit.name);
     else done.push({ name: hit.name, n: Object.keys(hit.picks).length, lg: hit.lg });
   }
-  return { done, self, skipped };
+  return { done, self, odds, skipped };
 }
 
 /** リンクで開かれたときは、その予想を取り込んでから始める */
@@ -2672,7 +2791,7 @@ function renderWeek() {
       <div class="mfoot oddsrow">
         <span>WINNER <b>${od.o[0].toFixed(2)}</b> / <b>${od.o[1].toFixed(2)}</b> / <b>${od.o[2].toFixed(2)}</b></span>
         <span>倍率から <b>${pct(od.p[0])}%</b> / <b>${pct(od.p[1])}%</b> / <b>${pct(od.p[2])}%</b></span>
-        <span class="hint">還元率 ${pct(od.payout)}%</span>
+        <span class="hint">還元率 ${pct(od.payout)}%${od.at ? " ／ " + jstLabel(od.at) + " 時点" : ""}</span>
       </div>` : "";
     const oin = (s, v) => `<input type="number" inputmode="decimal" step="0.01" min="0" max="9999"`
       + ` value="${v ?? ""}" data-o="${key}" data-s="${s}"`
@@ -2796,11 +2915,42 @@ function renderWeek() {
       </div>
     </div>`;
 
+  /* WINNER の倍率をまとめて入れる／配る。倍率は採点にもモデルにも使わない */
+  const oddsN = FIXTURES[w - 1].filter((_, i) => oddsOf(`${w}.${i}`)).length;
+  const oddsPanel = `
+    <details class="det oddsbox"${openOddsPanel ? " open" : ""}>
+      <summary>WINNERの倍率（${oddsN}/10試合ぶん入っています）</summary>
+      <div class="hint" style="margin-top:6px">
+        WINNERの画面をコピーして下に貼り、「読み取る」を押してください。
+        <b>一覧を確認してから入ります。</b>うまく読めない場合は、各試合の欄に直接入れてください。<br>
+        <b>倍率は販売締切まで動きます。</b>「いつ時点の倍率か」を記録するので、
+        <b>コピーしたらすぐ貼ってください</b>（貼った時刻ではなく、入れた時刻が記録されます）。
+      </div>
+      <textarea id="oddsio" style="margin-top:6px"
+        placeholder="WINNERの画面をここに貼り付けて「読み取る」。／「配る用に出す」を押すと、ここに配布用の文字列が出ます。"></textarea>
+      <div class="row" style="margin-top:6px">
+        <label class="hint">並び順
+          <select id="oddsOrder">
+            <option value="hda">勝 → 分 → 負</option>
+            <option value="had">勝 → 負 → 分</option>
+          </select>
+        </label>
+        <button id="oddsRead">読み取る</button>
+        <button id="oddsOut"${oddsN ? "" : " disabled"}>配る用に出す</button>
+      </div>
+      <div id="oddsPrev" style="margin-top:8px"></div>
+      <div class="hint" style="margin-top:6px">
+        配る用に出した文字列を送れば、受け取った人は<b>「受け取った予想を読み込む」欄に貼るだけ</b>で
+        同じ倍率が出ます。<b>予想や結果には触りません。</b>
+      </div>
+    </details>`;
+
   $("week").innerHTML = `
     <h2 style="margin-top:4px">第${w}節 <span class="tag">結果 ${done}/10</span>
       <span class="tag">あなたの予想 ${mine}/10</span>
       ${isSealed(w) ? '<span class="tag">封印済み</span>' : ""}</h2>
     ${sealPanel}
+    ${oddsPanel}
     ${html}
     <div class="note">
       上の<b>スコア欄は実際の結果</b>、下の<b>「あなたの予想」は自分の予想</b>です。別々に保存されます。
@@ -2819,10 +2969,50 @@ function renderWeek() {
   for (const el of $("week").querySelectorAll("input[data-o]")) {
     el.addEventListener("change", onOdds);
   }
+  $("oddsRead")?.addEventListener("click", () => {
+    openOddsPanel = true;
+    const rows = scrapeOdds($("oddsio").value, w, $("oddsOrder").value);
+    if (!rows.length) {
+      $("oddsPrev").innerHTML = `<div class="hint">読み取れませんでした。`
+        + `第${w}節のクラブ名が2つと、小数が3つ並んでいる行を探しています。`
+        + `各試合の欄に直接入れることもできます。</div>`;
+      return;
+    }
+    $("oddsPrev").innerHTML = `
+      <div class="scroll"><table>
+        <thead><tr><th>試合</th><th>ホーム勝</th><th>引分</th><th>アウェイ勝</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+          <td>${esc(FULL[r.h] ?? r.h)} — ${esc(FULL[r.a] ?? r.a)}</td>
+          <td><b>${r.o[0].toFixed(2)}</b></td><td><b>${r.o[1].toFixed(2)}</b></td><td><b>${r.o[2].toFixed(2)}</b></td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="oddsApply">この${rows.length}試合を入れる</button>
+        <span class="hint">ホーム・アウェイと数字の並びが合っているか見てください。
+          違っていたら「並び順」を変えてもう一度。</span>
+      </div>`;
+    oddsPrev = rows;
+    $("oddsApply").addEventListener("click", () => {
+      const t = now();
+      for (const r of oddsPrev) { STATE.odds[`${w}.${r.i}`] = r.o; STATE.oddsAt[`${w}.${r.i}`] = t; }
+      oddsPrev = [];
+      save(); renderWeek();
+    });
+  });
+  $("oddsOut")?.addEventListener("click", () => {
+    openOddsPanel = true;
+    const s = oddsString(w);
+    $("oddsio").value = s ?? "まだ倍率が1つも入っていません。";
+    if (s) $("oddsio").select();
+    $("oddsPrev").innerHTML = s
+      ? `<div class="hint">この文字列を送ってください。受け取った人は「受け取った予想を読み込む」欄に貼るだけです。</div>`
+      : "";
+  });
   for (const el of $("week").querySelectorAll("button[data-oclr]")) {
     el.addEventListener("click", () => {
       openOdds = el.dataset.oclr;
       delete STATE.odds[el.dataset.oclr];
+      delete STATE.oddsAt[el.dataset.oclr];
       save(); renderWeek();
     });
   }
@@ -2871,8 +3061,10 @@ function onPick(e) {
   save(); renderWeek(); renderScore();
 }
 
-/* 入力のあと描き直すと <details> が閉じてしまうので、開いていた試合を覚えておく */
+/* 入力のあと描き直すと <details> が閉じてしまうので、開いていた場所を覚えておく */
 let openOdds = null;
+let openOddsPanel = false;
+let oddsPrev = [];
 
 function onOdds(e) {
   const key = e.target.dataset.o;
@@ -2881,6 +3073,7 @@ function onOdds(e) {
   openOdds = key;
   if (v.some((x) => x === null || !Number.isFinite(x) || x <= 0)) return;  // 3つそろうまで確定しない
   STATE.odds[key] = v.map((x) => Math.round(x * 100) / 100);
+  STATE.oddsAt[key] = now();                    // 倍率は動くので「いつ時点か」を必ず持つ
   save(); renderWeek();                         // モデルには効かないので renderAll は要らない
 }
 
@@ -3234,7 +3427,8 @@ $("reset").addEventListener("click", () => {
      実際それで、画面からは消えるのに再読み込みで戻ってくる状態になっていた。
      中身を消す（delete）こと。 */
   STATE.week = 1;
-  for (const o of [STATE.results, STATE.cond, STATE.picks, STATE.pickAt, STATE.sealed, STATE.odds]) {
+  for (const o of [STATE.results, STATE.cond, STATE.picks, STATE.pickAt, STATE.sealed,
+                   STATE.odds, STATE.oddsAt]) {
     for (const k of Object.keys(o)) delete o[k];
   }
   PEERS[LG] = {};
@@ -3287,20 +3481,23 @@ $("codeIn").addEventListener("keydown", (e) => { if (e.key === "Enter") $("codeC
 
 $("shareImp").addEventListener("click", () => {
   const r = importShareAll($("shareio").value);
-  if (!r.done.length && !r.self.length) {
+  if (!r.done.length && !r.self.length && !r.odds.length) {
     $("shareio").value = "読み取れませんでした。相手から届いたリンク（#p=… を含む全体）か、" +
       "「予想をコピー用に出す」で出た文字列を貼ってください。" +
       "チャットの画面を何行まとめて貼ってもかまいません（予想でない行は読み飛ばします）。";
     return;
   }
   /* いま見ているリーグのぶんが1つでもあればそのまま。無ければ最初の1人に合わせる */
-  if (r.done.length && !r.done.some((d) => d.lg === LG)) {
+  if (r.done.length && !r.done.some((d) => d.lg === LG)) {  // 倍率だけのときは切り替えない
     useLeague(r.done[0].lg); bindLeague(); refit();
   }
   const msg = [];
   if (r.done.length) {
     msg.push(`${r.done.length}人ぶん読み込みました。`);
     for (const d of r.done) msg.push(`  ${d.name}（${d.n}試合・${d.lg}）`);
+  }
+  for (const o of r.odds) {
+    msg.push(`WINNERの倍率：第${o.w}節の${o.n}試合ぶん（${o.lg}・${jstLabel(o.at)} 時点）を入れました。`);
   }
   if (r.self.length) {
     msg.push(`「${r.self.join("」「")}」はあなた自身の名前なので取り込みませんでした。`);

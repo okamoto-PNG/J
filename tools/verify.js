@@ -618,6 +618,7 @@ function loadAppScoring() {
       get WEEKS(){ return WEEKS; }, get PER_WEEK(){ return PER_WEEK; },
       get TEAMS(){ return TEAMS; }, get FIXTURES(){ return FIXTURES; },
       scoreboard, fitBefore, baseRates, outcomeOf, recentForm, oddsOf,
+      oddsString, parseOddsShare, importOdds, scrapeOdds, jstLabel,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
       encodeBody4, decodeBody4, encodeFlags4, decodeFlags4, encodeSealed4, decodeSealed4,
@@ -680,6 +681,88 @@ if (!sc) {
       return z1 === null && z2 === null && z3 === null;
     })());
     for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+  }
+
+  /* --- 倍率を配る（予想の共有とは別枠）--- */
+  {
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
+    check("倍率が1つも無ければ配る文字列は出ない", sc.oddsString(3) === null);
+
+    const at = 1789000000000;                       // 決め打ちの時刻（往復を見るため）
+    sc.STATE.odds["3.0"] = [1.85, 3.4, 4.1];
+    sc.STATE.oddsAt["3.0"] = at;
+    sc.STATE.odds["3.5"] = [2.9, 3.2, 2.3];
+    sc.STATE.oddsAt["3.5"] = at - 60000;
+    const str = sc.oddsString(3);
+    check("配る文字列が o1 で始まる", str.startsWith("o1~"), str.slice(0, 24) + "…");
+    check("配る文字列に予想も結果も入っていない", !str.includes("~4~") && str.split("~").length === 5, str);
+    const got = sc.parseOddsShare(str);
+    check("配る文字列が往復して一致する",
+      got && got.w === 3 &&
+      JSON.stringify(got.odds["3.0"]) === JSON.stringify([1.85, 3.4, 4.1]) &&
+      JSON.stringify(got.odds["3.5"]) === JSON.stringify([2.9, 3.2, 2.3]),
+      JSON.stringify(got?.odds));
+    check("取得時刻はいちばん新しいものが乗る", got && got.at === at, String(got?.at));
+    check("壊れた倍率の文字列は拒否する",
+      sc.parseOddsShare("o1~J9~3~x~0:1/2/3") === null &&
+      sc.parseOddsShare("o1~J1~99~" + at.toString(36) + "~0:1/2/3") === null &&
+      sc.parseOddsShare("o1~J1~3~" + at.toString(36) + "~0:1/0/3") === null &&
+      sc.parseOddsShare("4~J1~x~y~z~w~v") === null);
+
+    /* 受け取り側。予想と結果に触っていないことを確かめる */
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
+    sc.STATE.picks["3.0"] = [2, 1];
+    sc.STATE.results["3.0"] = [0, 0];
+    const imp = sc.importOdds(str);
+    check("受け取った倍率が入る", imp && imp.n === 2 && sc.oddsOf("3.0").o[0] === 1.85, JSON.stringify(imp?.odds));
+    check("受け取った倍率に取得時刻が付く", sc.oddsOf("3.0").at === at, String(sc.oddsOf("3.0").at));
+    check("倍率を受け取っても自分の予想と結果は変わらない",
+      JSON.stringify(sc.STATE.picks["3.0"]) === "[2,1]" &&
+      JSON.stringify(sc.STATE.results["3.0"]) === "[0,0]");
+    delete sc.STATE.picks["3.0"]; delete sc.STATE.results["3.0"];
+
+    /* まとめ貼りの欄に貼っても拾えること */
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    const r2 = sc.importShareAll("これ今節の倍率ね\n" + str + "\nよろしく");
+    check("まとめ貼りの欄に倍率を貼っても拾う",
+      r2.odds.length === 1 && r2.odds[0].n === 2 && r2.done.length === 0, JSON.stringify(r2.odds));
+    check("倍率以外の行は読み飛ばす", r2.skipped === 2, String(r2.skipped));
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
+
+    check("日本時間の表示（タイムゾーンに左右されない）",
+      sc.jstLabel(Date.parse("2026-09-19T18:40:00+09:00")) === "9/19 18:40",
+      sc.jstLabel(Date.parse("2026-09-19T18:40:00+09:00")));
+  }
+
+  /* --- 貼り付けからの読み取り（WINNERの画面をそのままコピーしてくる用）--- */
+  {
+    const f0 = sc.FIXTURES[2][0], f1 = sc.FIXTURES[2][1];
+    const paste = [
+      "第3節の倍率",
+      `${f0.h} 1.85  引分 3.40  ${f0.a} 4.10`,
+      "きょうは寒いね",
+      `${f1.h}  2.90 / 3.20 / 2.30  ${f1.a}`,
+      "鹿島 2.00",                                  // 小数が足りない行
+    ].join("\n");
+    const rows = sc.scrapeOdds(paste, 3, "hda");
+    check("貼り付けから倍率を読み取れる", rows.length === 2,
+      rows.map((r) => `${r.h}-${r.a}:${r.o.join("/")}`).join(" "));
+    check("読み取った倍率がホーム・引分・アウェイの順で入る",
+      rows[0] && rows[0].i === 0 && rows[0].h === f0.h &&
+      JSON.stringify(rows[0].o) === JSON.stringify([1.85, 3.4, 4.1]), JSON.stringify(rows[0]?.o));
+    check("クラブ名が無い行・数字が足りない行は飛ばす", rows.every((r) => r.i === 0 || r.i === 1));
+    const flip = sc.scrapeOdds(`${f0.h} 1.85  ${f0.a} 4.10  引分 3.40`, 3, "had");
+    check("並び順を「勝→負→分」にすると入れ替わる",
+      flip[0] && JSON.stringify(flip[0].o) === JSON.stringify([1.85, 3.4, 4.1]),
+      JSON.stringify(flip[0]?.o));
+    check("その節にない対戦は拾わない", sc.scrapeOdds(`${f0.h} 1.85 3.40 4.10 ${f0.h}`, 3, "hda").length === 0);
+    check("同じ試合が2回出てきたら後のほうを採る", (() => {
+      const two = sc.scrapeOdds(`${f0.h} 1.85 3.40 4.10 ${f0.a}\n${f0.h} 2.00 3.00 5.00 ${f0.a}`, 3, "hda");
+      return two.length === 1 && two[0].o[0] === 2.0;
+    })());
   }
 
   /* --- 「全部消す」が保存まで消えること ---
