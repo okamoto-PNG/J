@@ -617,7 +617,7 @@ function loadAppScoring() {
       get PEERS(){ return PEERS; }, get ME(){ return ME; }, set ME(v){ ME = v; },
       get WEEKS(){ return WEEKS; }, get PER_WEEK(){ return PER_WEEK; },
       get TEAMS(){ return TEAMS; }, get FIXTURES(){ return FIXTURES; },
-      scoreboard, fitBefore, baseRates, outcomeOf, recentForm,
+      scoreboard, fitBefore, baseRates, outcomeOf, recentForm, oddsOf,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
       encodeBody4, decodeBody4, encodeFlags4, decodeFlags4, encodeSealed4, decodeSealed4,
@@ -652,6 +652,51 @@ if (!sc) {
   check("リンク形式（#p=…）からも読める", canon(sc.parseShare(sc.shareLink())?.picks ?? {}) === canon(sc.STATE.picks));
   check("壊れた共有文字列は拒否する",
     sc.parseShare("ゴミ") === null && sc.parseShare("1~J9~a~" + enc) === null);
+
+  /* --- WINNER の倍率（表示だけ）--- */
+  {
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    check("倍率を入れる前は null", sc.oddsOf("1.0") === null);
+    sc.STATE.odds["1.0"] = [2.0, 4.0, 4.0];               // 1/2+1/4+1/4 = 1.0
+    const a = sc.oddsOf("1.0");
+    check("倍率から出した確率の合計が1", Math.abs(a.p[0] + a.p[1] + a.p[2] - 1) < 1e-12);
+    check("倍率が低いほど確率が高い", a.p[0] > a.p[1] && Math.abs(a.p[1] - a.p[2]) < 1e-12,
+      a.p.map((x) => (x * 100).toFixed(1)).join("/"));
+    check("控除が無いときの還元率は100%", Math.abs(a.payout - 1) < 1e-12, String(a.payout));
+    /* 還元率50%（1/倍率 の合計が2）なら、割り戻す前と後で倍半分になる */
+    sc.STATE.odds["1.1"] = [1.0, 2.0, 2.0];
+    const b = sc.oddsOf("1.1");
+    check("還元率50%の倍率を入れると還元率50%と出る", Math.abs(b.payout - 0.5) < 1e-12,
+      (b.payout * 100).toFixed(1) + "%");
+    check("還元率が違っても確率は同じ向きに出る",
+      Math.abs(b.p[0] - 0.5) < 1e-12 && Math.abs(b.p[1] - 0.25) < 1e-12);
+    check("壊れた倍率は受け取らない", (() => {
+      sc.STATE.odds["1.2"] = [2.0, 0, 3.0];
+      const z1 = sc.oddsOf("1.2");
+      sc.STATE.odds["1.3"] = [2.0, 3.0];
+      const z2 = sc.oddsOf("1.3");
+      sc.STATE.odds["1.4"] = "2.0/3.0/4.0";
+      const z3 = sc.oddsOf("1.4");
+      return z1 === null && z2 === null && z3 === null;
+    })());
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+  }
+
+  /* --- 「全部消す」が保存まで消えること ---
+     STATE と STORE は同じ実体を指している（bindLeague）。
+     STATE.results = {} のように入れ替えると STORE 側に古い中身が残り、
+     画面からは消えたのに再読み込みで戻ってくる。実際それが起きていた。 */
+  {
+    check("STATE と STORE が同じ実体を指している（消去が保存に届く）",
+      sc.STATE.results === sc.STORE[sc.LG].results &&
+      sc.STATE.odds === sc.STORE[sc.LG].odds);
+    /* コメントは外してから見る。外さないと、この決まりを説明した注意書き自身に当たる */
+    const code = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    check("入れ替えでの消去が残っていない（STATE.results = {} と書かない）",
+      !/STATE\.(results|cond|picks|pickAt|sealed|odds)\s*=\s*\{\s*\}/.test(code),
+      (code.match(/STATE\.\w+\s*=\s*\{\s*\}/g) ?? []).join(" / "));
+  }
 
   /* --- 直近5試合（順位表の丸）--- */
   {

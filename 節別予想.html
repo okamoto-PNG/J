@@ -127,6 +127,11 @@
   .form i.l{background:var(--los)}
   .formnon{color:var(--muted)}            /* まだ結果が1つも無いクラブ */
 
+  /* WINNER の倍率（手入力・表示だけ） */
+  .oddsrow b{font-variant-numeric:tabular-nums}
+  .oddsin input[type=number]{width:5.2em}
+  .oddsin .plab{font-size:.72rem;color:var(--muted)}
+
   .bar{background:var(--line);border-radius:3px;height:8px;overflow:hidden;min-width:56px}
   .bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
 
@@ -1696,6 +1701,27 @@ function predict(home, away, useCond) {
   return { rh, ra, baseH, baseA, h2h, ch, ca, lh, la, ...outcome(lh, la) };
 }
 
+/* --------------------------------------------------------------------------
+   WINNER の倍率（払戻倍率）。手で入れた値を表示するだけで、
+   モデルにも採点にも使わない。
+
+   ★WINNER はパリミュチュエル方式で、倍率は胴元の予想ではなく
+     「みんなが買った口数」から決まる。還元率は約50%。
+     したがって 1/倍率 の合計は約2.0になる。確率として並べるには割り戻すしかなく、
+     割り戻して出てくるのは**お金の入り方**であって、当たりやすさそのものではない。
+     しかも販売締切（キックオフ10分前）まで動き、それまで確定しない。
+     モデルの確率と並べて眺めるためのものと割り切る。
+   -------------------------------------------------------------------------- */
+function oddsOf(key) {
+  const o = STATE.odds?.[key];
+  if (!Array.isArray(o) || o.length !== 3) return null;
+  if (!o.every((x) => typeof x === "number" && Number.isFinite(x) && x > 0)) return null;
+  const inv = o.map((x) => 1 / x);
+  const sum = inv[0] + inv[1] + inv[2];
+  if (!(sum > 0)) return null;
+  return { o, p: inv.map((x) => x / sum), payout: 1 / sum };
+}
+
 /* ==========================================================================
    3) 状態（localStorage に保存）
    ========================================================================== */
@@ -1704,9 +1730,10 @@ const KEY = "jleague-2627-weekly";
 /* リーグごとに別々の入力を持つ。STORE が保存される中身で、
    STATE は「いま表示しているリーグ」の作業用。中身は同じオブジェクトを指すので、
    STATE.results を書き換えれば STORE 側にも反映される。 */
-const blank = () => ({ results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {} });
+const blank = () => ({ results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {}, odds: {} });
 const STORE = { J1: blank(), J2: blank() };
-const STATE = { results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {}, fit: null, sim: null };
+const STATE = { results: {}, cond: {}, week: 1, picks: {}, pickAt: {}, sealed: {}, odds: {},
+                fit: null, sim: null };
 
 /* 自分の名前と、読み込んだ他の人の予想。
    results（実際の結果）とは別物なので混ぜないこと。
@@ -1722,7 +1749,9 @@ function bindLeague() {
   st.picks ??= {};                              // 旧バージョンから来たときの保険
   st.pickAt ??= {};
   st.sealed ??= {};
+  st.odds ??= {};                               // 倍率を入れる前の保存にも対応する
   STATE.results = st.results;
+  STATE.odds = st.odds;
   STATE.cond = st.cond;
   STATE.picks = st.picks;
   STATE.pickAt = st.pickAt;
@@ -2637,6 +2666,33 @@ function renderWeek() {
           (q ? `<b>${q[0]}-${q[1]}</b> ${judge(q)}${lateTag(f)}`
              : `<span class="hint">未記入</span>`) + `</span>`;
       }).join("")}</div>` : "";
+    /* WINNER の倍率。結果が出た後も残す（見返すと面白いので） */
+    const od = oddsOf(key);
+    const oddsRow = od ? `
+      <div class="mfoot oddsrow">
+        <span>WINNER <b>${od.o[0].toFixed(2)}</b> / <b>${od.o[1].toFixed(2)}</b> / <b>${od.o[2].toFixed(2)}</b></span>
+        <span>倍率から <b>${pct(od.p[0])}%</b> / <b>${pct(od.p[1])}%</b> / <b>${pct(od.p[2])}%</b></span>
+        <span class="hint">還元率 ${pct(od.payout)}%</span>
+      </div>` : "";
+    const oin = (s, v) => `<input type="number" inputmode="decimal" step="0.01" min="0" max="9999"`
+      + ` value="${v ?? ""}" data-o="${key}" data-s="${s}"`
+      + ` aria-label="${["ホーム勝ち", "引き分け", "アウェイ勝ち"][s]}の倍率">`;
+    const oddsBlock = `
+      <details class="det"${openOdds === key ? " open" : ""}>
+        <summary>WINNERの倍率${od ? "（入力済み）" : "を入れる"}</summary>
+        <div class="addrow oddsin" style="margin-top:6px">
+          <span class="plab">ホーム勝</span>${oin(0, od?.o[0])}
+          <span class="plab">引分</span>${oin(1, od?.o[1])}
+          <span class="plab">アウェイ勝</span>${oin(2, od?.o[2])}
+          ${od ? `<button data-oclr="${key}">消す</button>` : ""}
+        </div>
+        <div class="hint" style="margin-top:6px">
+          WINNER の倍率は<b>みんなが買った口数</b>で決まり、還元率は約50%です。
+          1/倍率 の合計が約2になるので、上の%は割り戻した「<b>お金の入り方</b>」であって、
+          当たりやすさそのものではありません。<b>販売締切まで動きます。</b>
+          ここに入れた値は<b>表示されるだけ</b>で、モデルにも的中率にも使いません。
+        </div>
+      </details>`;
     const pickBlock = `
       <div class="pickrow">
         <span class="plab">あなたの予想</span>
@@ -2695,6 +2751,7 @@ function renderWeek() {
         <div class="mfoot" style="margin-top:8px;display:block">スコア上位：${
           p.scores.slice(0, 5).map((s) => `${s.i}-${s.j} <b>${pct(s.p)}%</b>`).join(" ／ ")}</div>
       </details>`}
+      ${oddsRow}${oddsBlock}
       ${pickBlock}
     </div>`;
   }).join("");
@@ -2759,6 +2816,16 @@ function renderWeek() {
   for (const el of $("week").querySelectorAll("input[data-p]")) {
     el.addEventListener("change", onPick);
   }
+  for (const el of $("week").querySelectorAll("input[data-o]")) {
+    el.addEventListener("change", onOdds);
+  }
+  for (const el of $("week").querySelectorAll("button[data-oclr]")) {
+    el.addEventListener("click", () => {
+      openOdds = el.dataset.oclr;
+      delete STATE.odds[el.dataset.oclr];
+      save(); renderWeek();
+    });
+  }
   $("sealOn")?.addEventListener("click", () => {
     if (!mine) { alert("先に予想を入れてください。"); return; }
     const miss = 10 - mine;
@@ -2802,6 +2869,19 @@ function onPick(e) {
   STATE.picks[key] = [hg, ag];
   STATE.pickAt[key] = now();                            // 締切前に入れたかを判定するため
   save(); renderWeek(); renderScore();
+}
+
+/* 入力のあと描き直すと <details> が閉じてしまうので、開いていた試合を覚えておく */
+let openOdds = null;
+
+function onOdds(e) {
+  const key = e.target.dataset.o;
+  const v = [...e.target.closest(".oddsin").querySelectorAll("input")]
+    .map((el) => (el.value === "" ? null : +el.value));
+  openOdds = key;
+  if (v.some((x) => x === null || !Number.isFinite(x) || x <= 0)) return;  // 3つそろうまで確定しない
+  STATE.odds[key] = v.map((x) => Math.round(x * 100) / 100);
+  save(); renderWeek();                         // モデルには効かないので renderAll は要らない
 }
 
 function onScore(e) {
@@ -3148,11 +3228,15 @@ $("imp").addEventListener("click", () => {
   } catch (e) { $("io").value = "JSONとして読めませんでした：" + e.message; }
 });
 $("reset").addEventListener("click", () => {
-  if (!confirm("入力した結果・予想・離脱者を全部消します（読み込んだ他の人の予想も消えます）。よろしいですか？")) return;
-  STATE.results = {}; STATE.cond = {}; STATE.week = 1;
-  for (const k of Object.keys(STATE.picks)) delete STATE.picks[k];
-  for (const k of Object.keys(STATE.pickAt)) delete STATE.pickAt[k];
-  for (const k of Object.keys(STATE.sealed)) delete STATE.sealed[k];
+  if (!confirm("入力した結果・予想・離脱者・WINNERの倍率を全部消します（読み込んだ他の人の予想も消えます）。よろしいですか？")) return;
+  /* ★ STATE.results = {} と書いてはいけない。STATE と STORE は同じ実体を指していて
+     （bindLeague）、入れ替えると STORE 側に古い中身が残ったまま save() される。
+     実際それで、画面からは消えるのに再読み込みで戻ってくる状態になっていた。
+     中身を消す（delete）こと。 */
+  STATE.week = 1;
+  for (const o of [STATE.results, STATE.cond, STATE.picks, STATE.pickAt, STATE.sealed, STATE.odds]) {
+    for (const k of Object.keys(o)) delete o[k];
+  }
   PEERS[LG] = {};
   save(); refit(); renderAll();
 });
