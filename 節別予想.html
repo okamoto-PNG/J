@@ -3073,7 +3073,7 @@ function renderWeek() {
         <span>アウェイ勝 ${pct(p.aw)}%</span>
       </div>
       <details class="det">
-        <summary>内訳</summary>
+        <summary>内訳（このアプリの計算）</summary>
         <div class="scroll">
         <table>
           <thead><tr><th>要素</th><th></th><th>${esc(f.h)}</th><th>${esc(f.a)}</th></tr></thead>
@@ -3093,7 +3093,7 @@ function renderWeek() {
           </tbody>
         </table>
         </div>
-        <div class="mfoot" style="margin-top:8px;display:block">スコア上位：${
+        <div class="mfoot" style="margin-top:8px;display:block">モデルが見たスコア上位：${
           p.scores.slice(0, 5).map((s) => `${s.i}-${s.j} <b>${pct(s.p)}%</b>`).join(" ／ ")}</div>
       </details>`}
       ${oddsRow}${oddsBlock}
