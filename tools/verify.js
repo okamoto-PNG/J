@@ -618,7 +618,8 @@ function loadAppScoring() {
       get WEEKS(){ return WEEKS; }, get PER_WEEK(){ return PER_WEEK; },
       get TEAMS(){ return TEAMS; }, get FIXTURES(){ return FIXTURES; },
       scoreboard, fitBefore, baseRates, outcomeOf, recentForm, oddsOf,
-      oddsString, parseOddsShare, importOdds, scrapeOdds, jstLabel,
+      oddsString, parseOddsShare, importOdds, scrapeOdds, scrapeWinner, jstLabel,
+      parseOptLabel, modelPOf, clubsIn, predict,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
       encodeBody4, decodeBody4, encodeFlags4, decodeFlags4, encodeSealed4, decodeSealed4,
@@ -654,33 +655,64 @@ if (!sc) {
   check("壊れた共有文字列は拒否する",
     sc.parseShare("ゴミ") === null && sc.parseShare("1~J9~a~" + enc) === null);
 
-  /* --- WINNER の倍率（表示だけ）--- */
+  /* --- WINNER の倍率（スコア別・表示だけ）--- */
   {
     for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
     check("倍率を入れる前は null", sc.oddsOf("1.0") === null);
-    sc.STATE.odds["1.0"] = [2.0, 4.0, 4.0];               // 1/2+1/4+1/4 = 1.0
-    const a = sc.oddsOf("1.0");
-    check("倍率から出した確率の合計が1", Math.abs(a.p[0] + a.p[1] + a.p[2] - 1) < 1e-12);
-    check("倍率が低いほど確率が高い", a.p[0] > a.p[1] && Math.abs(a.p[1] - a.p[2]) < 1e-12,
-      a.p.map((x) => (x * 100).toFixed(1)).join("/"));
-    check("控除が無いときの還元率は100%", Math.abs(a.payout - 1) < 1e-12, String(a.payout));
-    /* 還元率50%（1/倍率 の合計が2）なら、割り戻す前と後で倍半分になる */
-    sc.STATE.odds["1.1"] = [1.0, 2.0, 2.0];
-    const b = sc.oddsOf("1.1");
-    check("還元率50%の倍率を入れると還元率50%と出る", Math.abs(b.payout - 0.5) < 1e-12,
-      (b.payout * 100).toFixed(1) + "%");
-    check("還元率が違っても確率は同じ向きに出る",
-      Math.abs(b.p[0] - 0.5) < 1e-12 && Math.abs(b.p[1] - 0.25) < 1e-12);
-    check("壊れた倍率は受け取らない", (() => {
-      sc.STATE.odds["1.2"] = [2.0, 0, 3.0];
-      const z1 = sc.oddsOf("1.2");
-      sc.STATE.odds["1.3"] = [2.0, 3.0];
-      const z2 = sc.oddsOf("1.3");
-      sc.STATE.odds["1.4"] = "2.0/3.0/4.0";
-      const z3 = sc.oddsOf("1.4");
-      return z1 === null && z2 === null && z3 === null;
+
+    /* 札の読み方。"2 - 1" のような画面の表記も、書き出した "H4" も読めること。
+       ★ここが片方だけだと、保存や共有から読み直したときにその口だけ集計から抜ける。 */
+    const f0 = sc.FIXTURES[0][0];
+    const L = (t) => sc.parseOptLabel(t, f0.h, f0.a);
+    check("スコアの札を読める", L("2 - 1")?.label === "2-1" && L("2 - 1").k === "h" &&
+      L("0-0")?.k === "d" && L("1 - 2")?.k === "a");
+    check("「◯◯4点以上」をどちら側か判別できる",
+      L(f0.h + "4点以上")?.label === "H4" && L(f0.a + "4点以上")?.label === "A4" &&
+      L("引分4点以上")?.label === "D4");
+    check("書き出した札（H4/D4/A4）を読み戻せる",
+      L("H4")?.k === "h" && L("D4")?.k === "d" && L("A4")?.k === "a");
+    check("知らない札は null", L("とくべつ賞") === null);
+
+    /* 倍率を入れて、割り戻した割合が1になること */
+    sc.STATE.odds["1.0"] = { "1-0": 8.7, "0-0": 9.5, "0-1": 7.9, H4: 26.5, D4: 90, A4: 31 };
+    sc.STATE.oddsAt["1.0"] = 1789000000000;
+    const od = sc.oddsOf("1.0");
+    check("口ごとの割合の合計が1",
+      Math.abs(od.opts.reduce((a, o) => a + o.p, 0) - 1) < 1e-12);
+    check("勝/分/負にまとめても合計が1（打ち切りの口も入る）",
+      Math.abs(od.g.h + od.g.d + od.g.a - 1) < 1e-12,
+      [od.g.h, od.g.d, od.g.a].map((x) => (x * 100).toFixed(1)).join("/"));
+    check("倍率が低い口ほど金が入っている", od.opts[0].odds <= od.opts[1].odds,
+      od.opts.slice(0, 2).map((o) => o.label + ":" + o.odds).join(" "));
+    check("還元率が 1/Σ(1/倍率) になる", (() => {
+      const inv = Object.values(sc.STATE.odds["1.0"]).reduce((a, x) => a + 1 / x, 0);
+      return Math.abs(od.payout - 1 / inv) < 1e-12;
     })());
-    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    check("取得時刻が付く", od.at === 1789000000000);
+    check("壊れた倍率は受け取らない", (() => {
+      sc.STATE.odds["1.1"] = [2, 3, 4];                 // 昔の3択の形
+      sc.STATE.odds["1.2"] = {};
+      return sc.oddsOf("1.1") === null && sc.oddsOf("1.2") === null;
+    })());
+    delete sc.STATE.odds["1.1"]; delete sc.STATE.odds["1.2"];
+
+    /* モデル側の同じ口の確率。打ち切り（4点以上）は足し合わせる */
+    const pr = sc.predict(f0.h, f0.a, false);
+    const one = sc.modelPOf(pr.grid, L("1 - 0"));
+    check("モデル側の1口の確率が grid と一致", Math.abs(one - pr.grid[1][0]) < 1e-12);
+    check("打ち切りの口はモデル側も足し合わせる", (() => {
+      let want = 0;
+      for (let i = 4; i < pr.grid.length; i++) for (let j = 0; j < i; j++) want += pr.grid[i][j];
+      return Math.abs(sc.modelPOf(pr.grid, L("H4")) - want) < 1e-12;
+    })());
+    check("モデル側もすべての口を足すと1に近い", (() => {
+      const all = [];
+      for (let i = 0; i <= 3; i++) for (let j = 0; j <= 3; j++) all.push(L(i + "-" + j));
+      all.push(L("H4"), L("A4"), L("D4"));
+      const s2 = all.reduce((a, o) => a + sc.modelPOf(pr.grid, o), 0);
+      return s2 > 0.98 && s2 <= 1.0000001;
+    })());
   }
 
   /* --- 倍率を配る（予想の共有とは別枠）--- */
@@ -689,45 +721,41 @@ if (!sc) {
     for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
     check("倍率が1つも無ければ配る文字列は出ない", sc.oddsString(3) === null);
 
-    const at = 1789000000000;                       // 決め打ちの時刻（往復を見るため）
-    sc.STATE.odds["3.0"] = [1.85, 3.4, 4.1];
+    const at = 1789000000000;
+    const one = { "1-0": 8.7, "2-1": 8.8, H4: 26.5, "0-0": 9.5, A4: 31 };
+    sc.STATE.odds["3.0"] = one;
     sc.STATE.oddsAt["3.0"] = at;
-    sc.STATE.odds["3.5"] = [2.9, 3.2, 2.3];
-    sc.STATE.oddsAt["3.5"] = at - 60000;
     const str = sc.oddsString(3);
-    check("配る文字列が o1 で始まる", str.startsWith("o1~"), str.slice(0, 24) + "…");
-    check("配る文字列に予想も結果も入っていない", !str.includes("~4~") && str.split("~").length === 5, str);
+    check("配る文字列が o2 で始まる", str.startsWith("o2~"), str.slice(0, 20) + "…");
     const got = sc.parseOddsShare(str);
     check("配る文字列が往復して一致する",
-      got && got.w === 3 &&
-      JSON.stringify(got.odds["3.0"]) === JSON.stringify([1.85, 3.4, 4.1]) &&
-      JSON.stringify(got.odds["3.5"]) === JSON.stringify([2.9, 3.2, 2.3]),
+      got && got.w === 3 && JSON.stringify(got.odds["3.0"]) === JSON.stringify(one),
       JSON.stringify(got?.odds));
-    check("取得時刻はいちばん新しいものが乗る", got && got.at === at, String(got?.at));
+    check("取得時刻も往復する", got && got.at === at, String(got?.at));
     check("壊れた倍率の文字列は拒否する",
-      sc.parseOddsShare("o1~J9~3~x~0:1/2/3") === null &&
-      sc.parseOddsShare("o1~J1~99~" + at.toString(36) + "~0:1/2/3") === null &&
-      sc.parseOddsShare("o1~J1~3~" + at.toString(36) + "~0:1/0/3") === null &&
+      sc.parseOddsShare("o2~J9~3~x~0:1-0/8.7") === null &&
+      sc.parseOddsShare("o2~J1~99~" + at.toString(36) + "~0:1-0/8.7") === null &&
+      sc.parseOddsShare("o2~J1~3~" + at.toString(36) + "~0:1-0/0") === null &&
+      sc.parseOddsShare("o2~J1~3~" + at.toString(36) + "~0:とくべつ/8.7") === null &&
       sc.parseOddsShare("4~J1~x~y~z~w~v") === null);
 
-    /* 受け取り側。予想と結果に触っていないことを確かめる */
+    /* 受け取り側。予想と結果に触っていないこと */
     for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
     for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
     sc.STATE.picks["3.0"] = [2, 1];
     sc.STATE.results["3.0"] = [0, 0];
     const imp = sc.importOdds(str);
-    check("受け取った倍率が入る", imp && imp.n === 2 && sc.oddsOf("3.0").o[0] === 1.85, JSON.stringify(imp?.odds));
-    check("受け取った倍率に取得時刻が付く", sc.oddsOf("3.0").at === at, String(sc.oddsOf("3.0").at));
+    check("受け取った倍率が入る", imp && imp.n === 1 && sc.oddsOf("3.0").raw["1-0"] === 8.7);
+    check("受け取った倍率に取得時刻が付く", sc.oddsOf("3.0").at === at);
     check("倍率を受け取っても自分の予想と結果は変わらない",
       JSON.stringify(sc.STATE.picks["3.0"]) === "[2,1]" &&
       JSON.stringify(sc.STATE.results["3.0"]) === "[0,0]");
     delete sc.STATE.picks["3.0"]; delete sc.STATE.results["3.0"];
 
-    /* まとめ貼りの欄に貼っても拾えること */
     for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
     const r2 = sc.importShareAll("これ今節の倍率ね\n" + str + "\nよろしく");
     check("まとめ貼りの欄に倍率を貼っても拾う",
-      r2.odds.length === 1 && r2.odds[0].n === 2 && r2.done.length === 0, JSON.stringify(r2.odds));
+      r2.odds.length === 1 && r2.done.length === 0, JSON.stringify(r2.odds?.length));
     check("倍率以外の行は読み飛ばす", r2.skipped === 2, String(r2.skipped));
     for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
     for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
@@ -737,33 +765,45 @@ if (!sc) {
       sc.jstLabel(Date.parse("2026-09-19T18:40:00+09:00")));
   }
 
-  /* --- 貼り付けからの読み取り（WINNERの画面をそのままコピーしてくる用）--- */
+  /* --- WINNER の画面からの読み取り ---
+     段組みに依存しないよう「オッズ」の直前が札・直後が倍率という規則だけを使う。
+     画面のカードは通し番号つきで縦に並ぶので、その番号を飛ばせることも見る。 */
   {
-    const f0 = sc.FIXTURES[2][0], f1 = sc.FIXTURES[2][1];
-    const paste = [
-      "第3節の倍率",
-      `${f0.h} 1.85  引分 3.40  ${f0.a} 4.10`,
-      "きょうは寒いね",
-      `${f1.h}  2.90 / 3.20 / 2.30  ${f1.a}`,
-      "鹿島 2.00",                                  // 小数が足りない行
-    ].join("\n");
-    const rows = sc.scrapeOdds(paste, 3, "hda");
-    check("貼り付けから倍率を読み取れる", rows.length === 2,
-      rows.map((r) => `${r.h}-${r.a}:${r.o.join("/")}`).join(" "));
-    check("読み取った倍率がホーム・引分・アウェイの順で入る",
-      rows[0] && rows[0].i === 0 && rows[0].h === f0.h &&
-      JSON.stringify(rows[0].o) === JSON.stringify([1.85, 3.4, 4.1]), JSON.stringify(rows[0]?.o));
-    check("クラブ名が無い行・数字が足りない行は飛ばす", rows.every((r) => r.i === 0 || r.i === 1));
-    const flip = sc.scrapeOdds(`${f0.h} 1.85  ${f0.a} 4.10  引分 3.40`, 3, "had");
-    check("並び順を「勝→負→分」にすると入れ替わる",
-      flip[0] && JSON.stringify(flip[0].o) === JSON.stringify([1.85, 3.4, 4.1]),
-      JSON.stringify(flip[0]?.o));
-    check("その節にない対戦は拾わない", sc.scrapeOdds(`${f0.h} 1.85 3.40 4.10 ${f0.h}`, 3, "hda").length === 0);
-    check("同じ試合が2回出てきたら後のほうを採る", (() => {
-      const two = sc.scrapeOdds(`${f0.h} 1.85 3.40 4.10 ${f0.a}\n${f0.h} 2.00 3.00 5.00 ${f0.a}`, 3, "hda");
-      return two.length === 1 && two[0].o[0] === 2.0;
+    const fx = sc.FIXTURES[0][0];
+    const card = (n, label, odds) => n + "\n" + label + "\nオッズ\n" + odds + "\n0\n払戻想定金額\n- 円\n";
+    const page =
+      fx.h + " 対 " + fx.a + "\n" + fx.h + " 勝利 （ホーム勝利）\n1口200円\n" +
+      card(1, "1 - 0", "8.7") + card(2, "2 - 0", "16.4") + card(3, "2 - 1", "8.8") +
+      card(7, fx.h + "4点以上", "26.5") +
+      "引分\n" + card(1, "0 - 0", "9.5") + card(2, "1 - 1", "6.2") + card(5, "引分4点以上", "90.0") +
+      fx.a + " 勝利 （アウェイ勝利）\n" +
+      card(1, "0 - 1", "7.9") + card(3, "1 - 2", "8.1") + card(7, fx.a + "4点以上", "31.0");
+    const got = sc.scrapeWinner(page);
+    check("WINNER の画面から倍率を読み取れる", got && Object.keys(got.raw).length === 10,
+      got ? Object.keys(got.raw).length + "口" : "読めなかった");
+    check("どの試合かを日程から特定する", got && got.w === 1 && got.i === 0 && got.h === fx.h);
+    check("カードの通し番号を札と間違えない", got && got.raw["1-0"] === 8.7 && got.raw["2-1"] === 8.8,
+      JSON.stringify(got?.raw));
+    check("「◯◯4点以上」も拾う",
+      got && got.raw.H4 === 26.5 && got.raw.A4 === 31 && got.raw.D4 === 90);
+    check("読めなかった札は報告される", got && Array.isArray(got.unknown));
+    check("クラブが1つしか出てこない文章は読まない", sc.scrapeWinner("オッズ\n8.7\n" + fx.h) === null);
+    check("今季の日程にない組み合わせは読まない",
+      sc.scrapeWinner(fx.h + " 対 " + fx.h + "\n1 - 0\nオッズ\n8.7") === null);
+    check("クラブ名は長いほうから当てる（略称に食われない）", (() => {
+      const cs = sc.clubsIn(fx.h + " 対 " + fx.a);
+      return cs.includes(fx.h) && cs.includes(fx.a);
     })());
+
+    /* 2試合ぶんを続けて貼った場合（空行3つで区切る） */
+    const fx2 = sc.FIXTURES[0][1];
+    const page2 = fx2.h + " 対 " + fx2.a + "\n" + fx2.h + " 勝利 （ホーム勝利）\n" +
+      card(1, "1 - 0", "5.5") + card(2, "2 - 1", "7.0");
+    const two = sc.scrapeOdds(page + "\n\n\n" + page2);
+    check("続けて貼った2試合ぶんを別々に読む", two.length === 2,
+      two.map((x) => x.h + "-" + x.a).join(" / "));
   }
+
 
   /* --- 「全部消す」が保存まで消えること ---
      STATE と STORE は同じ実体を指している（bindLeague）。
