@@ -378,11 +378,10 @@
       倍率は予想とは別枠なので、貼ってもあなたの予想・結果は変わりません。
     </div>
     <div class="note">
-      <b>リンクが短くなりました（版4）。</b>
-      予想していない試合を書かなくなったぶんだけ短くなります。運ぶ中身は今までと同じです。<br>
-      受け取る側は古い形式（版1〜3）もこれまでどおり読めますが、
-      <b>相手が古いページを開いたままだと、あなたの新しいリンクは読めません。</b>
-      その場合は相手にページの再読み込みをしてもらってください。
+      <b>リンクは長いですが、そのままで構いません。</b>
+      短くする形も作りましたが、<b>相手のページが古いと読めなく</b>なるため、
+      誰でも読める形で出しています。相手に再読み込みを頼まずに済むほうを選びました。<br>
+      受け取り側は<b>短い形（版4）も引き続き読めます</b>ので、前に配ったリンクも無駄になりません。
     </div>
   </section>
 
@@ -2483,8 +2482,13 @@ const sealMessage = (w) =>
    使う文字が [0-9a-z.] だけなので、URL にそのまま載せられる。
    ========================================================================== */
 /* 版1 予想だけ / 版2 ＋締切前フラグ / 版3 ＋封印の照合用（salt と封印済みの節）／
-   版4 ＝版3と同じ中身を短く詰めたもの。受け取り側は版1〜4のどれでも読める。 */
-const SHARE_V = "4";
+   版4 ＝版3と同じ中身を短く詰めたもの。受け取り側は版1〜4のどれでも読める。
+
+   ★出すのは版3。版4は短いが、**ページを更新していない相手は読めない**。
+     一度それで仲間が読み込めなくなった。相手に「再読み込みして」と頼まないと
+     使えない形は、身内で回すには向かない。長くても確実に読めるほうを既定にする。
+     版4で送られたものは引き続き読めるので、すでに配ったリンクは無駄にならない。 */
+const SHARE_V = "3";
 const b36 = (n) => Math.max(0, Math.min(35, n)).toString(36);
 
 function encodePicks(picks) {
@@ -2672,8 +2676,8 @@ function decodeSealed4(s) {
 /** 共有文字列。名前に記号が入っても壊れないよう名前だけURIエンコードする */
 const shareString = () => [
   SHARE_V, LG, encodeURIComponent(ME.name.trim() || "名前なし"),
-  encodeBody4(STATE.picks), encodeFlags4(STATE.picks, STATE.pickAt),
-  ME.salt || "0".repeat(16), encodeSealed4(STATE.sealed),
+  encodePicks(STATE.picks), encodeFlags(STATE.picks, STATE.pickAt),
+  ME.salt || "0".repeat(16), encodeSealed(STATE.sealed),
 ].join("~");
 
 const SHARE_PARTS = { 1: 4, 2: 5, 3: 7, 4: 7 };
@@ -3796,7 +3800,13 @@ $("codeIn").addEventListener("keydown", (e) => { if (e.key === "Enter") $("codeC
 $("shareImp").addEventListener("click", () => {
   const r = importShareAll($("shareio").value);
   if (!r.done.length && !r.self.length && !r.odds.length) {
-    $("shareio").value = "読み取れませんでした。相手から届いたリンク（#p=… を含む全体）か、" +
+    /* 版だけは分かるのに中身が読めない＝こちらのページが古い、が典型 */
+    const v = String($("shareio").value).match(/(?:^|#p=)(\d)~/);
+    $("shareio").value = (v && !SHARE_PARTS[v[1]]
+      ? `このページでは読めない形式（版${v[1]}）でした。` +
+        `**このページが古い可能性があります。** 再読み込みしてから、もう一度貼ってください。\n`
+      : "") +
+      "読み取れませんでした。相手から届いたリンク（#p=… を含む全体）か、" +
       "「予想をコピー用に出す」で出た文字列を貼ってください。" +
       "チャットの画面を何行まとめて貼ってもかまいません（予想でない行は読み飛ばします）。";
     return;

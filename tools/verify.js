@@ -973,18 +973,26 @@ if (!sc) {
     check("予想の数より多い版4のフラグは拒否する", sc.decodeFlags4("x0z", fp) === null);
   }
 
-  /* 実際に出る共有文字列で、版3と版4を突き合わせる */
+  /* ★「出す形」と「読める形」は別物。
+     出すのは**誰でも読める版3**。短い版4で出すと、ページを更新していない相手が
+     読めなくなる（実際それで仲間が読み込めなくなった）。
+     読むほうは版1〜4すべて。すでに配った版4のリンクを無駄にしないため。 */
   {
     for (const k of Object.keys(sc.STATE.picks)) delete sc.STATE.picks[k];
     for (let i = 0; i < sc.PER_WEEK; i++) sc.STATE.picks[`1.${i}`] = [i % 4, (i + 1) % 3];
-    const v4 = sc.shareString();
-    const v3 = ["3", sc.LG, encodeURIComponent(sc.ME.name),
-      sc.encodePicks(sc.STATE.picks), sc.encodeFlags(sc.STATE.picks, sc.STATE.pickAt),
-      sc.ME.salt || "0".repeat(16), sc.encodeSealed(sc.STATE.sealed)].join("~");
-    check("いま出す共有文字列は版4", v4.startsWith("4~"), v4.slice(0, 2));
-    check("版4は版3より短い（1節ぶんの予想で）",
-      v4.length < v3.length, `版4 ${v4.length}文字 / 版3 ${v3.length}文字`);
-    const p4 = sc.parseShare(v4), p3 = sc.parseShare(v3);
+    const out = sc.shareString();
+    check("いま出す共有文字列は版3（古いページでも読める形）",
+      out.startsWith("3~"), out.slice(0, 2));
+    check("出した文字列を自分でも読み戻せる",
+      canon(sc.parseShare(out)?.picks ?? {}) === canon(sc.STATE.picks));
+
+    /* 版4（短い形）も読めること。送る側が古い版を出しても困らないこと */
+    const v4 = ["4", sc.LG, encodeURIComponent(sc.ME.name),
+      sc.encodeBody4(sc.STATE.picks), sc.encodeFlags4(sc.STATE.picks, sc.STATE.pickAt),
+      sc.ME.salt || "0".repeat(16), sc.encodeSealed4(sc.STATE.sealed)].join("~");
+    check("短い版4はたしかに短い", v4.length < out.length,
+      `版4 ${v4.length}文字 / 版3 ${out.length}文字`);
+    const p4 = sc.parseShare(v4), p3 = sc.parseShare(out);
     check("版4と版3で読み取れる予想が同じ", canon(p4.picks) === canon(p3.picks));
     check("版4と版3で読み取れるフラグが同じ", canon(p4.flags) === canon(p3.flags));
     check("版4でも salt と封印済みの節が往復する",
@@ -994,6 +1002,11 @@ if (!sc) {
     check("壊れた版4は拒否する",
       sc.parseShare(v4.replace("4~J1~", "4~J9~")) === null &&
       sc.parseShare(v4.replace(/~[0-9a-f]{16}~/, "~zzzz~")) === null);
+    /* 版1・版2（もっと古い形）も読めること。仲間のページがどれだけ古くても受け取れる */
+    check("版1・版2の古い形も読める",
+      sc.parseShare("1~J1~" + encodeURIComponent("旧") + "~" + sc.encodePicks(sc.STATE.picks)) &&
+      sc.parseShare(["2", "J1", encodeURIComponent("旧"), sc.encodePicks(sc.STATE.picks),
+        sc.encodeFlags(sc.STATE.picks, {})].join("~")) !== null);
   }
 
   /* --- まとめ貼り（チャットの画面をそのまま貼る）--- */
