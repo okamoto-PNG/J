@@ -168,6 +168,15 @@
   .ocard.top .od{color:var(--away)}
   .ocard .cmp{font-size:.64rem;color:var(--muted);margin-top:7px;line-height:1.5;
     padding-top:7px;border-top:1px solid var(--line)}
+  /* 自分の予想と、実際の結果。色だけでなく字でも分かるようにする */
+  .ocard .mark{display:inline-block;font-size:.58rem;font-weight:700;border-radius:4px;
+    padding:1px 5px;margin-top:6px;letter-spacing:.02em}
+  .ocard .mark.me{background:color-mix(in srgb, var(--accent) 16%, transparent);color:var(--accent)}
+  .ocard .mark.hit{background:color-mix(in srgb, var(--good) 20%, transparent);color:var(--good)}
+  .ocard.me{border-color:var(--accent)}
+  .oyou{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;
+    margin-top:10px;padding-top:9px;border-top:1px dashed var(--line);font-size:var(--fs-sm)}
+  .oyou .big{font-size:1.15rem;font-weight:800;line-height:1.2}
   .ohead{font-size:var(--fs-sm);font-weight:700;margin:16px 0 0;
     display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
   .ohead .sub{font-weight:400;color:var(--muted);font-size:var(--fs-xs)}
@@ -1814,6 +1823,19 @@ function oddsOf(key) {
   return { raw, opts, g, payout: 1 / sum, n: opts.length, at: STATE.oddsAt?.[key] ?? null };
 }
 
+/**
+ * そのスコアが、WINNER のどの口にあたるか。
+ * ぴったりの口が無ければ「◯点以上」の打ち切りに落とす（5-0 なら「4点以上」）。
+ */
+function optForScore(od, hg, ag) {
+  if (!od || !Number.isInteger(hg) || !Number.isInteger(ag)) return null;
+  const exact = od.opts.find((o) => !o.over && o.hg === hg && o.ag === ag);
+  if (exact) return exact;
+  const k = hg > ag ? "h" : hg < ag ? "a" : "d";
+  const win = k === "a" ? ag : hg;                 // 勝った側の得点（引分なら同じ）
+  return od.opts.find((o) => o.over && o.k === k && (o.hg ?? o.ag) <= win) ?? null;
+}
+
 /** WINNER の1口に対する、モデル側の確率。打ち切り（4点以上）は足し合わせる */
 function modelPOf(grid, o) {
   if (!grid) return 0;
@@ -2984,9 +3006,14 @@ function renderWeek() {
       }).join("")}</div>` : "";
     /* WINNER の倍率。結果が出た後も残す（見返すと面白いので） */
     const od = oddsOf(key);
+    /* ★oddsRow からも使うので、ここで先に出しておくこと（後ろで宣言すると落ちる） */
+    const myOpt = my ? optForScore(od, my[0], my[1]) : null;
+    const hitOpt = r ? optForScore(od, r[0], r[1]) : null;
     const oddsRow = od ? `
       <div class="mfoot oddsrow">
         <span>WINNER <b>${pct(od.g.h)}%</b> / <b>${pct(od.g.d)}%</b> / <b>${pct(od.g.a)}%</b></span>
+        ${myOpt ? `<span>あなたの予想 <b>${my[0]}-${my[1]}</b>
+          <b class="${hitOpt && myOpt === hitOpt ? "ok" : ""}">${myOpt.odds.toFixed(1)}倍</b></span>` : ""}
         <span class="hint">${od.n}口ぶんの金の入り方 ／ 還元率 ${pct(od.payout)}%${
           od.at ? " ／ " + jstLabel(od.at) + " 時点" : ""}</span>
         <span><button data-oclr="${key}" title="この試合の倍率を消す">消す</button></span>
@@ -3004,12 +3031,15 @@ function renderWeek() {
       const mp = modelPOf(p.grid, o);
       const d = (mp - o.p) * 100;
       const nm2 = o.over ? `${o.hg ?? o.ag}点以上` : `${o.hg} - ${o.ag}`;
-      return `<div class="ocard${o === cheapest ? " top" : ""}">
+      const marks = (o === myOpt ? `<div class="mark me">あなたの予想</div>` : "")
+        + (o === hitOpt ? `<div class="mark hit">結果</div>` : "");
+      return `<div class="ocard${o === cheapest ? " top" : ""}${o === myOpt ? " me" : ""}">
         <div class="sc">${esc(nm2)}</div>
         <div class="lab">オッズ</div>
         <div class="od">${o.odds.toFixed(1)}</div>
         <div class="cmp">みんな ${pct(o.p)}%<br>モデル ${pct(mp)}%
           <span class="${d > 1 ? "up" : d < -1 ? "down" : ""}">${d > 0 ? "+" : ""}${d.toFixed(1)}</span></div>
+        ${marks}
       </div>`;
     };
     const groupOf = (k, label) => {
@@ -3026,6 +3056,17 @@ function renderWeek() {
     const oddsBlock = od ? `
       <details class="det"${openOdds === key ? " open" : ""}>
         <summary>WINNERの倍率とモデルの差（${od.n}口）</summary>
+        ${myOpt ? `
+        <div class="oyou">
+          <span>あなたの予想 <b>${my[0]}-${my[1]}</b> は</span>
+          <span class="big${hitOpt && myOpt === hitOpt ? " ok" : ""}">${myOpt.odds.toFixed(1)}倍</span>
+          <span class="hint">みんな ${pct(myOpt.p)}% ／ モデル ${pct(modelPOf(p.grid, myOpt))}%${
+            myOpt.over ? "（4点以上のまとめ）" : ""}</span>
+          ${hitOpt && myOpt === hitOpt
+            ? `<span class="ok">的中。${myOpt.odds.toFixed(1)}倍を当てました</span>`
+            : hitOpt ? `<span class="hint">結果は ${r[0]}-${r[1]}（${hitOpt.odds.toFixed(1)}倍）` +
+                `でした</span>` : ""}
+        </div>` : ""}
         ${groupOf("h", `${FULL[f.h] ?? f.h} 勝利`)}
         ${groupOf("d", "引分")}
         ${groupOf("a", `${FULL[f.a] ?? f.a} 勝利`)}

@@ -620,7 +620,7 @@ function loadAppScoring() {
       scoreboard, fitBefore, baseRates, outcomeOf, recentForm, oddsOf,
       oddsString, parseOddsShare, importOdds, scrapeOdds, scrapeWinner, jstLabel,
       oddsLink, importFromUrl, set hash(v){ location.hash = v; }, get href(){ return location.href; },
-      parseOptLabel, modelPOf, clubsIn, predict,
+      parseOptLabel, modelPOf, clubsIn, predict, optForScore,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
       encodeBody4, decodeBody4, encodeFlags4, decodeFlags4, encodeSealed4, decodeSealed4,
@@ -697,6 +697,22 @@ if (!sc) {
       return sc.oddsOf("1.1") === null && sc.oddsOf("1.2") === null;
     })());
     delete sc.STATE.odds["1.1"]; delete sc.STATE.odds["1.2"];
+
+    /* スコアから、対応する口を引けること。
+       ぴったりが無ければ「◯点以上」に落とす。ここを間違えると
+       「あなたの予想は何倍だったか」が別の口の倍率になる。 */
+    {
+      const o2 = sc.oddsOf("1.0");
+      check("ぴったりの口を引ける", sc.optForScore(o2, 1, 0)?.label === "1-0");
+      check("無いスコアは「◯点以上」に落ちる",
+        sc.optForScore(o2, 5, 0)?.label === "H4" && sc.optForScore(o2, 0, 7)?.label === "A4" &&
+        sc.optForScore(o2, 5, 5)?.label === "D4",
+        [sc.optForScore(o2, 5, 0)?.label, sc.optForScore(o2, 0, 7)?.label,
+         sc.optForScore(o2, 5, 5)?.label].join("/"));
+      check("打ち切りに届かないスコアは引けない（3-0 の口が無ければ null）",
+        sc.optForScore(o2, 3, 0) === null);
+      check("倍率が無ければ null", sc.optForScore(null, 1, 0) === null);
+    }
 
     /* モデル側の同じ口の確率。打ち切り（4点以上）は足し合わせる */
     const pr = sc.predict(f0.h, f0.a, false);
@@ -1398,6 +1414,11 @@ function runWithFakeDom(seed) {
     check("倍率が無い試合でも試合カードは出る", count(wk, /<div class="match">/g) === 10,
       count(wk, /<div class="match">/g) + "枚");
     check("他の人の予想も出る", wk.includes("友達"));
+    /* 倍率を入れる動機がここ（当てたときに何倍だったか）なので、出ることを見る */
+    check("自分の予想が何倍かが出る", wk.includes("あなたの予想") && wk.includes("倍"),
+      (wk.match(/あなたの予想 <b>\d+-\d+<\/b>[\s\S]{0,60}/) ?? [""])[0].replace(/<[^>]*>/g, ""));
+    check("自分の予想の口に印が付く", wk.includes('class="mark me"'));
+    check("結果の口にも印が付く", wk.includes('class="mark hit"'));
     check("順位表に直近5の丸が出る",
       (made2.get("table")?.innerHTML ?? "").includes('class="form"'));
   }
