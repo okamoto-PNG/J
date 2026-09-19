@@ -15,33 +15,45 @@
 <style>
   :root{
     --bg:#f5f6f8; --panel:#fff; --panel2:#fafbfc; --text:#16191d; --muted:#6b7280;
-    --line:#e3e6ea; --accent:#1d4ed8; --home:#2563eb; --draw:#9ca3af; --away:#dc2626;
+    --line:#e3e6ea; --accent:#1d4ed8; --home:#2563eb; --away:#dc2626;
     --good:#16a34a; --warn:#d97706; --r:12px;
     /* 直近5試合の丸。丸の中を塗るので、明暗どちらのテーマでも同じ色で足りる */
     --win:#16a34a; --drw:#6b7280; --los:#dc2626;
+
+    /* ★勝敗の色は「ホーム ←→ アウェイ」の両極と、その中点の引分という**発散**の並び。
+       中点を色にしてはいけない（虹色にしない）ので、引分は意図的に無彩色のまま。
+       ただし --draw をそのまま塗りに使うと白文字が 2.47:1 しか出ないので、
+       塗り用（--drawfill）だけ濃くして 3:1 を満たす。文字色には使わない。 */
+    --drawfill:#6b7280;
+
+    /* 文字の大きさ。ばらばらに指定すると階層が崩れるので段を決めて使う */
+    --fs-xs:.7rem; --fs-sm:.78rem; --fs-md:.86rem; --fs-lg:1rem;
   }
   /* OS の設定 */
   @media (prefers-color-scheme:dark){
     :root{ --bg:#121519; --panel:#1b1f24; --panel2:#22272d; --text:#e7eaee; --muted:#98a2ad;
-           --line:#2d333a; --accent:#60a5fa; --home:#60a5fa; --away:#f87171; }
+           --line:#2d333a; --accent:#60a5fa; --home:#60a5fa; --away:#f87171;
+           --drawfill:#7c848f; }
   }
   /* 閲覧側のテーマ切替。OS設定より優先させる（両方向） */
   :root[data-theme="dark"]{
     --bg:#121519; --panel:#1b1f24; --panel2:#22272d; --text:#e7eaee; --muted:#98a2ad;
     --line:#2d333a; --accent:#60a5fa; --home:#60a5fa; --away:#f87171;
+    --drawfill:#7c848f;
   }
   :root[data-theme="light"]{
     --bg:#f5f6f8; --panel:#fff; --panel2:#fafbfc; --text:#16191d; --muted:#6b7280;
     --line:#e3e6ea; --accent:#1d4ed8; --home:#2563eb; --away:#dc2626;
+    --drawfill:#6b7280;
   }
   *{box-sizing:border-box}
   body{margin:0;padding:20px 14px 60px;background:var(--bg);color:var(--text);
        font-family:system-ui,"Segoe UI","Hiragino Sans","Meiryo",sans-serif;line-height:1.6;
        font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;
        -webkit-text-size-adjust:100%}
-  .wrap{max-width:960px;margin:0 auto}
-  h1{font-size:1.25rem;margin:0 0 2px;text-wrap:balance}
-  .sub{color:var(--muted);font-size:.82rem;margin:0 0 6px}
+  .wrap{max-width:980px;margin:0 auto}
+  h1{font-size:1.3rem;margin:0 0 3px;text-wrap:balance;letter-spacing:.01em}
+  .sub{color:var(--muted);font-size:var(--fs-sm);margin:0 0 6px}
   a{color:var(--accent)}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
 
@@ -59,10 +71,11 @@
   .badge b{color:var(--text)}
 
   section{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
-          padding:16px 18px;margin-bottom:14px}
-  h2{font-size:.9rem;margin:0 0 12px;color:var(--muted);font-weight:700;
-     letter-spacing:.02em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  h2 .tag{font-weight:400;font-size:.75rem;opacity:.85}
+          padding:18px 20px;margin-bottom:16px}
+  h2{font-size:var(--fs-md);margin:0 0 14px;color:var(--text);font-weight:700;
+     letter-spacing:.02em;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+     padding-bottom:10px;border-bottom:1px solid var(--line)}
+  h2 .tag{font-weight:400;font-size:var(--fs-xs);color:var(--muted)}
 
   select,input,button,textarea{font:inherit;color:var(--text);background:var(--panel2);
          border:1px solid var(--line);border-radius:8px;padding:7px 10px}
@@ -81,13 +94,13 @@
   .nav .now{font-size:1.05rem;font-weight:700;min-width:5.5em;text-align:center}
   .prog{height:7px;background:var(--line);border-radius:4px;overflow:hidden;margin-bottom:4px}
   .prog i{display:block;height:100%;background:var(--accent)}
-  .proglab{font-size:.74rem;color:var(--muted);margin-bottom:14px}
+  .proglab{font-size:var(--fs-xs);color:var(--muted);margin-bottom:14px}
 
   /* --- 試合カード --- */
-  .match{border:1px solid var(--line);border-radius:10px;background:var(--panel2);
-         padding:10px 12px;margin-bottom:8px}
-  .mhead{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center}
-  .tname{font-size:.9rem;font-weight:600;line-height:1.35}
+  .match{border:1px solid var(--line);border-radius:12px;background:var(--panel2);
+         padding:13px 14px;margin-bottom:10px}
+  .mhead{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center}
+  .tname{font-size:var(--fs-md);font-weight:700;line-height:1.35}
   .tname.a{text-align:right}
   .mid{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:118px}
   .score{display:flex;align-items:center;gap:5px}
@@ -95,32 +108,44 @@
   .score .sep{color:var(--muted)}
   .score button{padding:6px 9px;line-height:1}
   .done{font-size:1.15rem;font-weight:800;letter-spacing:.04em}
-  .mtag{font-size:.68rem;color:var(--muted)}
-  .prob{display:flex;height:22px;border-radius:6px;overflow:hidden;margin-top:9px;
-        border:1px solid var(--line)}
-  .prob div{display:flex;align-items:center;justify-content:center;font-size:.7rem;
-            font-weight:700;color:#fff;min-width:0;overflow:hidden;white-space:nowrap}
-  .prob .h{background:var(--home)} .prob .d{background:var(--draw)} .prob .a{background:var(--away)}
-  .mfoot{display:flex;justify-content:space-between;gap:6px;font-size:.72rem;color:var(--muted);margin-top:4px}
+  .mtag{font-size:var(--fs-xs);color:var(--muted)}
+  /* 積み上げの区切りは線ではなく<b>すき間</b>で見せる（塗りどうしが接すると境目が濁る）。
+     両端は丸めて、棒の端であることを分かるようにする。 */
+  .prob{display:flex;gap:2px;height:26px;margin-top:10px}
+  .prob div{display:flex;align-items:center;justify-content:center;font-size:var(--fs-xs);
+            font-weight:700;color:#fff;min-width:0;overflow:hidden;white-space:nowrap;
+            border-radius:5px}
+  .prob .h{background:var(--home)}
+  .prob .d{background:var(--drawfill)}     /* 白文字が乗るので濃いほう */
+  .prob .a{background:var(--away)}
+  .mfoot{display:flex;justify-content:space-between;gap:8px;font-size:var(--fs-xs);
+         color:var(--muted);margin-top:6px;flex-wrap:wrap;align-items:center}
+  .mfoot b{color:var(--text)}
   .flag{font-size:.66rem;padding:1px 5px;border-radius:4px;background:rgba(217,119,6,.16);
         color:var(--warn);margin-left:4px;white-space:nowrap}
-  details.det{margin-top:8px}
-  details.det summary{font-size:.74rem;color:var(--accent);cursor:pointer;padding:3px 0}
+  details.det{margin-top:10px}
+  details.det summary{font-size:var(--fs-sm);color:var(--accent);cursor:pointer;
+    padding:5px 0;font-weight:600}
+  details.det summary:hover{text-decoration:underline}
 
-  table{border-collapse:collapse;width:100%;font-size:.81rem}
-  th,td{padding:5px 7px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
-  th{color:var(--muted);font-weight:600;font-size:.73rem}
+  table{border-collapse:collapse;width:100%;font-size:var(--fs-sm)}
+  th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:var(--fs-xs);
+     letter-spacing:.02em;border-bottom-width:2px}
   th:first-child,td:first-child{text-align:left}
   th:nth-child(2),td:nth-child(2){text-align:left}
+  tbody tr:nth-child(even){background:color-mix(in srgb, var(--panel2) 55%, transparent)}
+  tbody tr:hover{background:color-mix(in srgb, var(--accent) 7%, transparent)}
   tbody tr:last-child td{border-bottom:none}
   .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  /* 上位・下位の帯。行そのものを塗らず、左端の線だけで示す（数字を読む邪魔をしない） */
   tr.acl td:first-child{box-shadow:inset 3px 0 0 var(--good)}
   tr.rel td:first-child{box-shadow:inset 3px 0 0 var(--away)}
 
   /* 直近5試合。色が見分けにくい人にも伝わるよう、丸の中に 勝/分/敗 の字を入れる */
-  .form{display:inline-flex;gap:3px}
-  .form i{width:17px;height:17px;border-radius:50%;font-style:normal;font-weight:700;
-    font-size:.6rem;line-height:1;color:#fff;display:inline-flex;
+  .form{display:inline-flex;gap:4px}
+  .form i{width:19px;height:19px;border-radius:50%;font-style:normal;font-weight:700;
+    font-size:.62rem;line-height:1;color:#fff;display:inline-flex;
     align-items:center;justify-content:center}
   .form i.w{background:var(--win)}
   .form i.d{background:var(--drw)}
@@ -129,17 +154,23 @@
 
   /* WINNER の倍率。本家と同じくカードで並べる（表だと目が追えないため）。
      出すのは「点数」と「オッズ」だけ。口数や払戻想定は出さない。 */
-  .ogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(102px,1fr));gap:7px;margin-top:6px}
-  .ocard{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
-    padding:8px 5px;text-align:center}
-  .ocard.top{border-color:var(--away)}
-  .ocard .sc{font-weight:700;font-size:.88rem;letter-spacing:.05em}
-  .ocard .lab{font-size:.6rem;color:var(--muted);margin-top:3px}
-  .ocard .od{font-weight:700;font-size:1.12rem;font-variant-numeric:tabular-nums;margin-top:1px}
+  .ogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));
+    gap:8px;margin-top:8px}
+  .ocard{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:11px 7px 9px;text-align:center;transition:border-color .12s}
+  .ocard:hover{border-color:var(--accent)}
+  /* いちばん金が入っている口。色だけに頼らないよう、枠も太くする */
+  .ocard.top{border-color:var(--away);border-width:2px;padding:10px 6px 8px;
+    background:color-mix(in srgb, var(--away) 6%, var(--panel))}
+  .ocard .sc{font-weight:700;font-size:var(--fs-md);letter-spacing:.06em}
+  .ocard .lab{font-size:.62rem;color:var(--muted);margin-top:5px;letter-spacing:.08em}
+  .ocard .od{font-weight:800;font-size:1.3rem;line-height:1.15;margin-top:1px}
   .ocard.top .od{color:var(--away)}
-  .ocard .cmp{font-size:.6rem;color:var(--muted);margin-top:5px;line-height:1.4}
-  .ohead{font-size:.75rem;font-weight:700;margin:12px 0 0}
-  .ohead .sub{font-weight:400;color:var(--muted);font-size:.7rem;margin-left:6px}
+  .ocard .cmp{font-size:.64rem;color:var(--muted);margin-top:7px;line-height:1.5;
+    padding-top:7px;border-top:1px solid var(--line)}
+  .ohead{font-size:var(--fs-sm);font-weight:700;margin:16px 0 0;
+    display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .ohead .sub{font-weight:400;color:var(--muted);font-size:var(--fs-xs)}
 
   .oddsrow b{font-variant-numeric:tabular-nums}
 
@@ -163,8 +194,9 @@
   .chk{display:flex;align-items:center;gap:6px;font-size:.78rem;cursor:pointer;padding:3px 0}
   .chk input{width:17px;height:17px;accent-color:var(--accent);cursor:pointer;flex:none}
 
-  .note{font-size:.76rem;color:var(--muted);margin-top:10px;padding-top:10px;
-        border-top:1px dashed var(--line)}
+  /* 説明文。詰まって見えるので行間を広げ、1行を長くしすぎない */
+  .note{font-size:var(--fs-sm);color:var(--muted);margin-top:12px;padding-top:12px;
+        border-top:1px dashed var(--line);line-height:1.8;max-width:74ch}
   .note b{color:var(--text)}
   .pill{display:inline-block;font-size:.7rem;padding:1px 6px;border-radius:4px;
         background:var(--line);color:var(--muted);margin-left:5px}
@@ -180,7 +212,7 @@
   .peer b{font-weight:700}
   .ok{color:var(--good);font-weight:800}
   .ng{color:var(--away);font-weight:800}
-  .hint{font-size:.72rem;color:var(--muted)}
+  .hint{font-size:var(--fs-xs);color:var(--muted);line-height:1.7}
   /* 封印（締切をチャットに証明してもらう） */
   .sealbox{border:1px solid var(--line);border-radius:9px;background:var(--panel2);
            padding:10px 12px;margin:10px 0 14px}
@@ -1912,16 +1944,25 @@ function clubsIn(text) {
  *   行を数えるような読み方をすると簡単に崩れる。
  *   選択肢の手前にはカードの通し番号（1,2,3…）が付くので、それは飛ばす。
  */
-function scrapeWinner(text) {
+function scrapeWinner(text, hintWeek) {
   const src = String(text ?? "");
   const found = clubsIn(src);
-  if (found.length < 2) return null;
-  /* 今季の日程にある組み合わせだけを相手にする */
-  let hit = null;
-  for (let w = 1; w <= WEEKS && !hit; w++) {
-    const i = FIXTURES[w - 1].findIndex((f) => found.includes(f.h) && found.includes(f.a));
-    if (i >= 0) hit = { w, i, f: FIXTURES[w - 1][i] };
-  }
+  /* 今季の日程にある組み合わせだけを相手にする。
+     いま見ている節を先に探すので、同じ対戦が2回ある（ホームとアウェイ）年でも取り違えない。 */
+  const at = (w) => {
+    if (!FIXTURES[w - 1]) return null;
+    const i = found.length >= 2
+      ? FIXTURES[w - 1].findIndex((f) => found.includes(f.h) && found.includes(f.a))
+      : found.length === 1
+        /* クラブ名が1つしか写っていなくても、その節に1試合しかなければ決められる
+           （「ホーム勝利」のところだけコピーした場合がこれ） */
+        ? (FIXTURES[w - 1].filter((f) => f.h === found[0] || f.a === found[0]).length === 1
+            ? FIXTURES[w - 1].findIndex((f) => f.h === found[0] || f.a === found[0]) : -1)
+        : -1;
+    return i >= 0 ? { w, i, f: FIXTURES[w - 1][i] } : null;
+  };
+  let hit = Number.isInteger(hintWeek) ? at(hintWeek) : null;
+  for (let w = 1; w <= WEEKS && !hit; w++) hit = found.length >= 2 ? at(w) : null;
   if (!hit) return null;
 
   const chunks = src.split("オッズ");
@@ -1948,13 +1989,30 @@ function scrapeWinner(text) {
   return { w: hit.w, i: hit.i, h: hit.f.h, a: hit.f.a, raw, unknown };
 }
 
-/** 貼り付けから、いくつの試合ぶんでも拾う（1試合ずつのページを続けて貼ってもよい） */
-function scrapeOdds(text) {
+/**
+ * 貼り付けから、いくつの試合ぶんでも拾う（1試合ずつのページを続けて貼ってもよい）。
+ *
+ * ★区切りを間違えると、**別の試合の倍率が1試合に混ざる**。黙って混ざるので気づけない。
+ *   WINNER の画面は試合ごとに「（ホーム勝利）」がちょうど1回出るので、そこで切る。
+ *   その見出しの行にはホームのクラブ名も載っているので、行の先頭から取る。
+ */
+function scrapeOdds(text, hintWeek) {
+  const src = String(text ?? "");
+  const marks = [];
+  const re = /[（(]ホーム勝利[）)]/g;
+  for (let m = re.exec(src); m; m = re.exec(src)) marks.push(m.index);
+  const lineHead = (at) => { const n = src.lastIndexOf("\n", at); return n < 0 ? 0 : n + 1; };
+  let blocks;
+  if (marks.length > 1) {
+    blocks = marks.map((at, k) => src.slice(k === 0 ? 0 : lineHead(at),
+      k + 1 < marks.length ? lineHead(marks[k + 1]) : src.length));
+  } else {
+    blocks = src.split(/\n\s*\n\s*\n+/);            // 見出しが無ければ空行3つで切る
+    if (blocks.length < 2) blocks = [src];
+  }
   const out = new Map();
-  /* クラブ名が出てくるたびに試合が変わるとみなし、その手前までを1試合として読む */
-  const blocks = String(text ?? "").split(/\n\s*\n\s*\n+/);   // 空行3つ以上で切る
-  for (const b of (blocks.length > 1 ? blocks : [String(text ?? "")])) {
-    const got = scrapeWinner(b);
+  for (const b of blocks) {
+    const got = scrapeWinner(b, hintWeek);
     if (got) out.set(got.w + "." + got.i, got);
   }
   return [...out.values()].sort((x, y) => (x.w - y.w) || (x.i - y.i));
@@ -3076,7 +3134,8 @@ function renderWeek() {
       <summary>WINNERの倍率（${oddsN}/10試合ぶん入っています）</summary>
       <div class="hint" style="margin-top:6px">
         WINNER の試合ページを開いて<b>全体をコピー</b>し、下に貼って「読み取る」を押してください。
-        1試合ずつでも、何試合ぶんか続けて貼っても構いません。
+        <b>この画面から動かずに、何試合ぶんでも続けて入れられます</b>
+        （1試合ずつ貼っても、まとめて貼っても構いません。入れたぶんは足されていきます）。
         <b>一覧を確認してから入ります。</b><br>
         <b>倍率は販売締切まで動きます。</b>「いつ時点の倍率か」を記録するので、
         <b>コピーしたらすぐ貼ってください</b>（貼った時刻ではなく、入れた時刻が記録されます）。
@@ -3133,7 +3192,7 @@ function renderWeek() {
   }
   const readOdds = (text) => {
     openOddsPanel = true;
-    const rows = scrapeOdds(text);
+    const rows = scrapeOdds(text, w);
     if (!rows.length) {
       $("oddsPrev").innerHTML = `<div class="hint">読み取れませんでした。`
         + `今季の対戦カード（クラブ名2つ）と、「オッズ」の並びを探しています。`

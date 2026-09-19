@@ -795,12 +795,37 @@ if (!sc) {
       return cs.includes(fx.h) && cs.includes(fx.a);
     })());
 
-    /* 2試合ぶんを続けて貼った場合（空行3つで区切る） */
+    /* ★複数試合を続けて貼ったとき、別の試合の倍率が1試合に混ざらないこと。
+       混ざっても黙って入るので、ここが崩れると気づけない。 */
+    const mk = (fx3, base) =>
+      fx3.h + " 勝利 （ホーム勝利）\n1口200円\n" +
+      card(1, "1 - 0", String(base)) + card(2, "2 - 1", String(base + 1)) +
+      "引分\n" + card(1, "0 - 0", "6.0") +
+      fx3.a + " 勝利 （アウェイ勝利）\n" + card(1, "0 - 1", "7.0");
+    const g0 = sc.FIXTURES[1][0], g1 = sc.FIXTURES[1][1], g2 = sc.FIXTURES[1][2];
+    const glued = mk(g0, 8.5) + mk(g1, 3.2) + mk(g2, 5);      // 区切りの空行なし
+    const three = sc.scrapeOdds(glued, 2);
+    check("続けて貼った3試合ぶんを別々に読む（空行が無くても）", three.length === 3,
+      three.map((x) => x.h + "-" + x.a).join(" / "));
+    check("別の試合の倍率が混ざらない",
+      three[0]?.raw["1-0"] === 8.5 && three[1]?.raw["1-0"] === 3.2 && three[2]?.raw["1-0"] === 5,
+      three.map((x) => x.raw["1-0"]).join(","));
+    check("1試合あたりの口数が増えていない（混ざっていない証拠）",
+      three.every((x) => Object.keys(x.raw).length === 4),
+      three.map((x) => Object.keys(x.raw).length).join(","));
+
+    /* 「ホーム勝利」のところだけコピーした場合。クラブ名が1つしか写らない */
+    const partial = g0.h + " 勝利 （ホーム勝利）\n" + card(1, "1 - 0", "8.5") + card(3, "2 - 1", "5.4");
+    check("見ている節が分かっていれば、クラブ名1つでも試合を決められる",
+      sc.scrapeOdds(partial, 2)[0]?.i === 0, JSON.stringify(sc.scrapeOdds(partial, 2)[0]?.raw));
+    check("節が分からなければ決め打ちしない（取り違えるくらいなら読まない）",
+      sc.scrapeOdds(partial).length === 0);
+
+    /* 2試合ぶんを空行で区切って貼った場合（見出しが無い形） */
     const fx2 = sc.FIXTURES[0][1];
-    const page2 = fx2.h + " 対 " + fx2.a + "\n" + fx2.h + " 勝利 （ホーム勝利）\n" +
-      card(1, "1 - 0", "5.5") + card(2, "2 - 1", "7.0");
+    const page2 = fx2.h + " 対 " + fx2.a + "\n" + card(1, "1 - 0", "5.5") + card(2, "2 - 1", "7.0");
     const two = sc.scrapeOdds(page + "\n\n\n" + page2);
-    check("続けて貼った2試合ぶんを別々に読む", two.length === 2,
+    check("空行で区切った2試合ぶんも別々に読む", two.length === 2,
       two.map((x) => x.h + "-" + x.a).join(" / "));
   }
 
