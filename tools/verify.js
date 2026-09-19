@@ -619,6 +619,7 @@ function loadAppScoring() {
       get TEAMS(){ return TEAMS; }, get FIXTURES(){ return FIXTURES; },
       scoreboard, fitBefore, baseRates, outcomeOf, recentForm, oddsOf,
       oddsString, parseOddsShare, importOdds, scrapeOdds, scrapeWinner, jstLabel,
+      oddsLink, importFromUrl, set hash(v){ location.hash = v; }, get href(){ return location.href; },
       parseOptLabel, modelPOf, clubsIn, predict,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
@@ -757,6 +758,36 @@ if (!sc) {
     check("まとめ貼りの欄に倍率を貼っても拾う",
       r2.odds.length === 1 && r2.done.length === 0, JSON.stringify(r2.odds?.length));
     check("倍率以外の行は読み飛ばす", r2.skipped === 2, String(r2.skipped));
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
+
+    /* リンクで配る道。予想の共有リンク（#p=）と同じ仕組み */
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
+    sc.STATE.odds["3.0"] = one;
+    sc.STATE.oddsAt["3.0"] = at;
+    const link = sc.oddsLink(3);
+    check("倍率のリンクが作れる", link === sc.href.split("#")[0] + "#o=" + sc.oddsString(3), link);
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
+    sc.hash = "#o=" + str;
+    const viaLink = sc.importFromUrl();
+    check("リンクから倍率が入る",
+      viaLink && viaLink.kind === "odds" && viaLink.w === 3 &&
+      sc.oddsOf("3.0")?.raw["1-0"] === 8.7, JSON.stringify(viaLink?.kind));
+    /* 貼る途中で % エンコードされても戻せること */
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    sc.hash = "#o=" + encodeURIComponent(str);
+    check("％エンコードされたリンクでも入る",
+      sc.importFromUrl()?.kind === "odds" && sc.oddsOf("3.0")?.raw["1-0"] === 8.7);
+    /* WINNER のページのリンクを貼っても何も起きないこと */
+    for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
+    sc.hash = "#o=https://www.toto-dream.com/winner/index.html";
+    check("WINNER のページのリンクでは何も入らない",
+      sc.importFromUrl() === null && sc.oddsOf("3.0") === null);
+    check("よその文字列を貼っても倍率にはならない",
+      sc.importShareAll("https://www.toto-dream.com/winner/index.html").odds.length === 0);
+    sc.hash = "";
     for (const k of Object.keys(sc.STATE.odds)) delete sc.STATE.odds[k];
     for (const k of Object.keys(sc.STATE.oddsAt)) delete sc.STATE.oddsAt[k];
 
@@ -1276,6 +1307,100 @@ section("6-d. 自動更新の安全網（tools/auto.js）");
     !fs.existsSync(auto.BACKUP) || fs.readdirSync(auto.BACKUP).length === 0);
   /* 最後にもう一度、本物が壊れていないことを確かめる */
   check("検算の後もデータが元のまま", fs.readFileSync(target, "utf8") === original);
+}
+
+/* ═══════════════════════════════════════════ 6-f. 画面が最後まで描けること */
+
+section("6-f. 画面が最後まで描けること（節別予想.html）");
+
+/**
+ * ★6-b までの検算は「描画」の手前までしか動かしていない。
+ *   そのため renderWeek が例外で落ちても気づけず、
+ *   **節ビューに10試合が1つも出ない**状態で公開しかけた（倍率が入っていない試合で
+ *   od.opts を触っていた）。画面は検算の外、では済まないのでここで丸ごと走らせる。
+ *
+ * 本物のブラウザは用意できないので、最低限の代用品の上で動かす。
+ * 見るのは「例外を投げずに最後まで行くか」と「入るべきものが入ったか」だけ。
+ */
+function runWithFakeDom(seed) {
+  const src = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8")
+    .replace(/\r\n/g, "\n").match(/<script>\n?"use strict";([\s\S]*?)<\/script>/)[1];
+  const made = new Map();
+  const mkEl = (id) => ({
+    id, innerHTML: "", textContent: "", value: "", disabled: false, dataset: {},
+    style: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+    addEventListener() {}, removeEventListener() {}, click() {}, focus() {}, select() {},
+    setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
+    querySelectorAll: () => [], querySelector: () => null, closest: () => null,
+    appendChild: (x) => x, insertAdjacentHTML() {},
+  });
+  const el = (id) => { if (!made.has(id)) made.set(id, mkEl(id)); return made.get(id); };
+  const store = new Map();
+  if (seed) store.set("jleague-2627-weekly", seed);
+  const doc = {
+    getElementById: el, querySelectorAll: () => [], querySelector: () => null,
+    createElement: (t) => mkEl("<" + t + ">"),
+    documentElement: mkEl("html"), head: mkEl("head"), body: mkEl("body"), addEventListener() {},
+  };
+  const ls = { getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+  const loc = { href: "https://example.test/a.html", hash: "" };
+  const win = { innerWidth: 1200, matchMedia: () => ({ matches: false, addEventListener() {} }),
+    addEventListener() {}, localStorage: ls };
+  const nav = { clipboard: { writeText: async () => {}, readText: async () => "" } };
+  new Function("document", "localStorage", "location", "history", "window", "navigator",
+    "alert", "confirm", '"use strict";' + src)(
+    doc, ls, loc, { replaceState() {} }, win, nav, () => {}, () => true);
+  return made;
+}
+
+{
+  const count = (t, re) => (String(t).match(re) ?? []).length;
+  /* 1) まっさらな状態（倍率も結果も無い）。ふつうの人が最初に開く形 */
+  let made = null, err = null;
+  try { made = runWithFakeDom(null); } catch (e) { err = e; }
+  check("まっさらな状態で最後まで描ける（例外を投げない）", !err,
+    err ? err.message : "");
+  if (made) {
+    const wk = made.get("week")?.innerHTML ?? "";
+    check("節ビューに10試合ぶんのカードが出る", count(wk, /<div class="match">/g) === 10,
+      count(wk, /<div class="match">/g) + "枚");
+    check("予想の入力欄が20個（10試合×2）", count(wk, /data-p="/g) === 20,
+      count(wk, /data-p="/g) + "個");
+    check("結果の入力欄も20個", count(wk, /data-k="/g) === 20, count(wk, /data-k="/g) + "個");
+    check("確率バーが10本", count(wk, /<div class="prob">/g) === 10);
+    check("順位表が描ける", (made.get("table")?.innerHTML ?? "").includes("<table>"));
+    check("的中率・シミュレーション・クラブ状況も描ける",
+      (made.get("scoreout")?.innerHTML ?? "").length > 0 &&
+      (made.get("simout")?.innerHTML ?? "").length > 0 &&
+      (made.get("outList")?.innerHTML ?? "").length > 0);
+  }
+
+  /* 2) 倍率・結果・予想・他の人の予想が入っている状態。カードの側の道を通す */
+  const seed = JSON.stringify({
+    v: 4, lg: "J1",
+    store: { J1: { results: { "1.0": [2, 1] }, cond: {}, week: 1,
+      picks: { "1.0": [1, 0] }, pickAt: { "1.0": 1 }, sealed: {},
+      odds: { "1.0": { "1-0": 8.5, "2-1": 5.4, H4: 10.9, "0-0": 6, A4: 20 } },
+      oddsAt: { "1.0": 1789000000000 } }, J2: {} },
+    me: { name: "検算", salt: "0123456789abcdef" },
+    peers: { J1: { 友達: { picks: { "1.0": [0, 2] }, flags: {}, salt: "", sealed: {} } }, J2: {} },
+  });
+  let made2 = null, err2 = null;
+  try { made2 = runWithFakeDom(seed); } catch (e) { err2 = e; }
+  check("倍率・結果・予想が入っていても最後まで描ける", !err2, err2 ? err2.message : "");
+  if (made2) {
+    const wk = made2.get("week")?.innerHTML ?? "";
+    check("倍率が入っている試合にカードが出る", count(wk, /class="ocard/g) === 5,
+      count(wk, /class="ocard/g) + "枚");
+    check("いちばん金が入っている口に印が付く", count(wk, /class="ocard top"/g) === 1,
+      count(wk, /class="ocard top"/g) + "個");
+    check("倍率が無い試合でも試合カードは出る", count(wk, /<div class="match">/g) === 10,
+      count(wk, /<div class="match">/g) + "枚");
+    check("他の人の予想も出る", wk.includes("友達"));
+    check("順位表に直近5の丸が出る",
+      (made2.get("table")?.innerHTML ?? "").includes('class="form"'));
+  }
 }
 
 /* ═══════════════════════════════════════════════ 6-e. 節の並びが動かないこと */

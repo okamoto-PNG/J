@@ -1904,6 +1904,12 @@ function parseOddsShare(text) {
   return { lg, w, at, odds };
 }
 
+/** 倍率の共有リンク。押すだけで入るので、長い文字列を貼らせずに済む */
+function oddsLink(w) {
+  const s = oddsString(w);
+  return s ? location.href.split("#")[0] + "#o=" + s : null;
+}
+
 /** 受け取った倍率を取り込む。予想にも結果にも触らない */
 function importOdds(text) {
   const got = parseOddsShare(text);
@@ -2746,8 +2752,14 @@ function importShareAll(text) {
 
 /** リンクで開かれたときは、その予想を取り込んでから始める */
 function importFromUrl() {
-  if (!location.hash.startsWith("#p=")) return null;
-  const got = importShare(location.hash);
+  const h = location.hash;
+  if (!h.startsWith("#p=") && !h.startsWith("#o=")) return null;
+  /* 貼る途中で %エンコードされることがあるので、戻せるなら戻してから読む */
+  let body = h.slice(3);
+  try { if (/%[0-9A-Fa-f]{2}/.test(body)) body = decodeURIComponent(body); } catch { /* そのまま */ }
+  const got = h.startsWith("#o=")
+    ? (() => { const r = importOdds(body); return r ? { ...r, kind: "odds" } : null; })()
+    : importShare(h);
   history.replaceState(null, "", location.href.split("#")[0]);   // 二重取り込みを防ぐ
   return got;
 }
@@ -2981,7 +2993,9 @@ function renderWeek() {
       </div>` : "";
     /* スコアごとの突き合わせ。本家と同じ並べ方（カード）にする。
        1枚に出すのは「点数」と「オッズ」、それに小さくモデルとの比較だけ。 */
-    const cheapest = od.opts.reduce((m, o) => (o.odds < m.odds ? o : m), od.opts[0]);
+    /* ★倍率が入っていない試合（ふつうはこちら）では od が null になる。
+       ここで od.opts を触ると renderWeek ごと落ちて、節ビューに10試合が出なくなる。 */
+    const cheapest = od ? od.opts.reduce((m, o) => (o.odds < m.odds ? o : m), od.opts[0]) : null;
     /* 本家の並び順。勝った側の得点が少ない順、打ち切りは最後 */
     const ordOf = (o) => o.over
       ? [1, 0, 0]
@@ -3145,7 +3159,8 @@ function renderWeek() {
       <div class="row" style="margin-top:6px">
         <button class="primary" id="oddsRead">読み取る</button>
         <button id="oddsPaste">クリップボードから読む</button>
-        <button id="oddsOut"${oddsN ? "" : " disabled"}>配る用に出す</button>
+        <button id="oddsLink"${oddsN ? "" : " disabled"}>配る用のリンクを作る</button>
+        <button id="oddsOut"${oddsN ? "" : " disabled"}>配る用の文字列を出す</button>
       </div>
       <details class="det" style="margin-top:6px">
         <summary>コピーを1クリックにする（ブックマークレット）</summary>
@@ -3158,8 +3173,11 @@ function renderWeek() {
       </details>
       <div id="oddsPrev" style="margin-top:8px"></div>
       <div class="hint" style="margin-top:6px">
-        配る用に出した文字列を送れば、受け取った人は<b>「受け取った予想を読み込む」欄に貼るだけ</b>で
-        同じ倍率が出ます。<b>予想や結果には触りません。</b>
+        <b>配り方は2つ。</b>「リンクを作る」なら<b>受け取った人は押すだけ</b>、
+        「文字列を出す」なら<b>「受け取った予想を読み込む」欄に貼るだけ</b>です。
+        どちらも<b>予想や結果には触りません</b>。<br>
+        <b>WINNER のページのリンクを配っても反映されません。</b>
+        アプリは他所のサイトの中身を読めないので、ここで出したリンク（または文字列）を配ってください。
       </div>
     </details>`;
 
@@ -3242,6 +3260,16 @@ function renderWeek() {
       $("oddsPrev").innerHTML = `<div class="hint">クリップボードを読めませんでした（${esc(e.message)}）。`
         + `上の欄に手で貼り付けて「読み取る」を押してください。</div>`;
     }
+  });
+  $("oddsLink")?.addEventListener("click", () => {
+    openOddsPanel = true;
+    const u = oddsLink(w);
+    $("oddsio").value = u ?? "まだ倍率が1つも入っていません。";
+    if (u) $("oddsio").select();
+    $("oddsPrev").innerHTML = u
+      ? `<div class="hint">このリンクを送ってください。<b>受け取った人は押すだけ</b>で、
+         第${w}節の倍率が入ります（予想と結果は変わりません）。</div>`
+      : "";
   });
   $("oddsOut")?.addEventListener("click", () => {
     openOddsPanel = true;
@@ -3745,10 +3773,15 @@ const arrived = importFromUrl();
 if (arrived && !arrived.self && LEAGUES[arrived.lg] && arrived.lg !== LG) {
   useLeague(arrived.lg); bindLeague(); refit();
 }
+/* 倍率のリンクなら、その節を開いておく（見に来た人がすぐ見られるように） */
+if (arrived?.kind === "odds" && Number.isInteger(arrived.w)) STATE.week = arrived.w;
 
 renderAll();
 
-if (arrived) {
+if (arrived?.kind === "odds") {
+  $("shareio").value = `WINNERの倍率：第${arrived.w}節の${arrived.n}試合ぶん`
+    + `（${arrived.lg}・${jstLabel(arrived.at)} 時点）を入れました。予想と結果は変えていません。`;
+} else if (arrived) {
   $("shareio").value = arrived.self
     ? `届いた予想の名前「${arrived.name}」はあなた自身の名前と同じでした。読み込んでいません。`
     : `${arrived.name} さんの予想 ${Object.keys(arrived.picks).length}試合を読み込みました。`;
