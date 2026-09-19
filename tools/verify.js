@@ -632,6 +632,7 @@ function loadAppScoring() {
       oddsString, parseOddsShare, importOdds, scrapeOdds, scrapeWinner, jstLabel,
       oddsLink, importFromUrl, set hash(v){ location.hash = v; }, get href(){ return location.href; },
       parseOptLabel, modelPOf, clubsIn, predict, optForScore,
+      snapshot, undoInfo, undoRestore, firstOpenWeek,
       deadlineOf, isClosed, koKnown, onTime, deadlineLabel,
       encodePicks, decodePicks, encodeFlags, decodeFlags, encodeSealed, decodeSealed,
       encodeBody4, decodeBody4, encodeFlags4, decodeFlags4, encodeSealed4, decodeSealed4,
@@ -887,6 +888,57 @@ if (!sc) {
       two.map((x) => x.h + "-" + x.a).join(" / "));
   }
 
+
+  /* --- 上書きを取り消せること ---
+     「読み込み」と「全部消す」は中身を丸ごと置き換える。向きを間違えると戻せないので、
+     直前を1つ取っておく。ここが効かないと、間違えた人は泣き寝入りになる。 */
+  {
+    const n2 = (o) => Object.keys(o ?? {}).length;
+    /* いったん綺麗にしてから、戻したい中身を作る */
+    for (const o of [sc.STATE.results, sc.STATE.picks, sc.STATE.pickAt, sc.STATE.sealed,
+                     sc.STATE.odds, sc.STATE.oddsAt]) {
+      for (const k of Object.keys(o)) delete o[k];
+    }
+    sc.PEERS.J1 = {};
+    sc.STATE.results["1.0"] = [2, 1];
+    sc.STATE.results["1.1"] = [0, 0];
+    sc.STATE.picks["8.0"] = [1, 0];
+    sc.PEERS.J1["たろう"] = { picks: { "8.0": [0, 1] }, flags: {}, salt: "", sealed: {} };
+    sc.save();
+
+    sc.snapshot("全部消す");
+    const info = sc.undoInfo();
+    check("上書きの直前を取っておける",
+      info && info.why === "全部消す" && info.results === 2 && info.picks === 1 && info.peers === 1,
+      JSON.stringify(info));
+
+    /* 消してから戻す */
+    for (const o of [sc.STATE.results, sc.STATE.picks]) for (const k of Object.keys(o)) delete o[k];
+    sc.PEERS.J1 = {};
+    sc.save();
+    check("消えた状態になる", n2(sc.STATE.results) === 0 && n2(sc.PEERS.J1) === 0);
+    check("元に戻せる", sc.undoRestore() === true);
+    check("結果も予想も仲間の予想も戻る",
+      n2(sc.STATE.results) === 2 && n2(sc.STATE.picks) === 1 && n2(sc.PEERS.J1) === 1,
+      `結果${n2(sc.STATE.results)} 予想${n2(sc.STATE.picks)} 仲間${n2(sc.PEERS.J1)}`);
+    check("戻したあと保存にも残る（再読み込みで消えない）", (() => {
+      sc.save(); sc.load(); sc.bindLeague();
+      return n2(sc.STATE.results) === 2 && n2(sc.PEERS.J1) === 1;
+    })());
+    /* もう一度押すと、戻す前に行ける（行き来できる） */
+    check("押し直すと戻す前に行ける", (() => {
+      sc.undoRestore();
+      return n2(sc.STATE.results) === 0 && n2(sc.PEERS.J1) === 0;
+    })());
+    check("さらに押すとまた戻る", (() => {
+      sc.undoRestore();
+      return n2(sc.STATE.results) === 2 && n2(sc.PEERS.J1) === 1;
+    })());
+
+    for (const o of [sc.STATE.results, sc.STATE.picks]) for (const k of Object.keys(o)) delete o[k];
+    sc.PEERS.J1 = {};
+    sc.save();
+  }
 
   /* --- 「全部消す」が保存まで消えること ---
      STATE と STORE は同じ実体を指している（bindLeague）。
@@ -1410,6 +1462,9 @@ function runWithFakeDom(seed) {
     check("結果の入力欄も20個", count(wk, /data-k="/g) === 20, count(wk, /data-k="/g) + "個");
     check("確率バーが10本", count(wk, /<div class="prob">/g) === 10);
     check("順位表が描ける", (made.get("table")?.innerHTML ?? "").includes("<table>"));
+    check("戻せるものが無ければ「元に戻す」は出ない",
+      (made.get("undobox")?.innerHTML ?? "") === "",
+      (made.get("undobox")?.innerHTML ?? "").slice(0, 40));
     check("的中率・シミュレーション・クラブ状況も描ける",
       (made.get("scoreout")?.innerHTML ?? "").length > 0 &&
       (made.get("simout")?.innerHTML ?? "").length > 0 &&

@@ -392,6 +392,7 @@
       <button id="imp">読み込み</button>
       <button id="reset">全部消す</button>
     </div>
+    <div id="undobox" style="margin-top:9px"></div>
     <textarea id="io" placeholder="「書き出し」を押すとここにJSONが出ます。別の端末で使うときは、そのJSONを貼って「読み込み」。" style="margin-top:10px"></textarea>
     <div class="note">
       保存先は<b>この端末のこのブラウザだけ</b>です。パソコンとスマホで同じ状態にしたいときは、
@@ -401,7 +402,10 @@
       予想を入れた時刻も端末ごとに記録されるので、打ち直すとその時刻が「いま」になり、
       すでに始まった試合の予想は<b>締切後＝採点対象外</b>になります。
       同じ人の的中率が端末によって違って見えるのは、たいていこれが原因です。
-      このJSONには<b>入力した時刻も入っている</b>ので、こちらで運べばずれません。
+      このJSONには<b>入力した時刻も入っている</b>ので、こちらで運べばずれません。<br>
+      <b>「読み込み」と「全部消す」は中身を丸ごと置き換えます。</b>
+      向きを間違えても戻せるよう、<b>上書きの直前を1つだけ取ってあります</b>。
+      戻せるときだけ「元に戻す」が出ます。押し直せば行き来できます。
     </div>
   </section>
 
@@ -2104,6 +2108,52 @@ function save() {
     localStorage.setItem(KEY, JSON.stringify({ v: 4, lg: LG, store: STORE, me: ME, peers: PEERS }));
   } catch (e) { /* プライベートモード等では保存できないが、動作自体は続く */ }
 }
+/* ★「読み込み」と「全部消す」は中身を丸ごと置き換える。
+     向きを間違えると戻せないので、上書きの直前を1つだけ取っておく。
+     取っておくのは1つだけ。何世代も持つと、どれがどれだか分からなくなる。 */
+const UNDO_KEY = KEY + "-undo";
+
+/** いまの中身を「直前の状態」として取っておく */
+function snapshot(why) {
+  try {
+    STORE[LG].week = STATE.week;
+    localStorage.setItem(UNDO_KEY, JSON.stringify({
+      at: now(), why, data: { v: 4, lg: LG, store: STORE, me: ME, peers: PEERS },
+    }));
+  } catch (e) { /* 取っておけなくても、本筋は止めない */ }
+}
+
+/** 戻せるものがあるか。あれば中身の要約も返す */
+function undoInfo() {
+  try {
+    const j = JSON.parse(localStorage.getItem(UNDO_KEY) ?? "null");
+    if (!j || !j.data || !j.data.store) return null;
+    const n = (o) => Object.keys(o ?? {}).length;
+    const s = j.data.store;
+    return {
+      at: j.at, why: String(j.why ?? "上書き"),
+      results: n(s.J1?.results) + n(s.J2?.results),
+      picks: n(s.J1?.picks) + n(s.J2?.picks),
+      peers: n(j.data.peers?.J1) + n(j.data.peers?.J2),
+    };
+  } catch { return null; }
+}
+
+/** 直前の状態に戻す。戻す前のいまの中身をまた取っておくので、押し直せば行き来できる */
+function undoRestore() {
+  let j = null;
+  try { j = JSON.parse(localStorage.getItem(UNDO_KEY) ?? "null"); } catch { return false; }
+  if (!j || !j.data || !j.data.store) return false;
+  snapshot("元に戻す");
+  try { localStorage.setItem(KEY, JSON.stringify(j.data)); } catch { return false; }
+  load();
+  useLeague(LG);
+  bindLeague();
+  STATE.week = Math.max(1, Math.min(WEEKS, STATE.week || firstOpenWeek()));
+  refit();
+  return true;
+}
+
 const OLD_KEY = "j1-2627-weekly";   // J1 だけだった頃の保存先
 function load() {
   try {
@@ -3676,9 +3726,30 @@ function renderTabs() {
   document.title = `${LG} 節別予想 2026-27`;
 }
 
+/** 「元に戻す」。戻せるものがあるときだけ出す（ふだんは何も出ない） */
+function renderUndo() {
+  const el = $("undobox");
+  if (!el) return;
+  const u = undoInfo();
+  if (!u) { el.innerHTML = ""; return; }
+  el.innerHTML = `
+    <div class="row">
+      <button id="undoBtn">元に戻す</button>
+      <span class="hint">「${esc(u.why)}」（${jstLabel(u.at)}）の<b>直前</b>に戻します。
+        そのときの中身：結果 ${u.results}件 ／ 予想 ${u.picks}件 ／ 仲間 ${u.peers}人</span>
+    </div>`;
+  $("undoBtn").addEventListener("click", () => {
+    if (!confirm("直前の上書きを取り消して、その前の状態に戻します。よろしいですか？\n" +
+                 "（もう一度押すと、いまの状態に戻せます）")) return;
+    if (!undoRestore()) { $("io").value = "戻せるものがありませんでした。"; return; }
+    save(); renderAll();
+    $("io").value = "直前の状態に戻しました。もう一度「元に戻す」を押すと、戻す前に戻ります。";
+  });
+}
+
 function renderAll() {
   renderTabs(); renderTableNote(); renderBadges(); renderNav(); renderWeek();
-  renderTable(); renderSim(); renderCond(); renderScore(); renderShare();
+  renderTable(); renderSim(); renderCond(); renderScore(); renderShare(); renderUndo();
 }
 
 /* ==========================================================================
@@ -3725,6 +3796,7 @@ $("exp").addEventListener("click", () => {
 $("imp").addEventListener("click", () => {
   try {
     const j = JSON.parse($("io").value);
+    snapshot("読み込み");                        // 置き換える前のいまを取っておく
     if (j && j.v === 2 && j.store) {
       for (const k of ["J1", "J2"]) if (j.store[k]) STORE[k] = { ...blank(), ...j.store[k] };
       if (LEAGUES[j.lg]) { useLeague(j.lg); }
@@ -3740,6 +3812,7 @@ $("imp").addEventListener("click", () => {
 });
 $("reset").addEventListener("click", () => {
   if (!confirm("入力した結果・予想・離脱者・WINNERの倍率を全部消します（読み込んだ他の人の予想も消えます）。よろしいですか？")) return;
+  snapshot("全部消す");                          // 消す前のいまを取っておく
   /* ★ STATE.results = {} と書いてはいけない。STATE と STORE は同じ実体を指していて
      （bindLeague）、入れ替えると STORE 側に古い中身が残ったまま save() される。
      実際それで、画面からは消えるのに再読み込みで戻ってくる状態になっていた。
