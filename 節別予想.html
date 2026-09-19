@@ -127,7 +127,20 @@
   .form i.l{background:var(--los)}
   .formnon{color:var(--muted)}            /* まだ結果が1つも無いクラブ */
 
-  /* WINNER の倍率（手入力・表示だけ） */
+  /* WINNER の倍率。本家と同じくカードで並べる（表だと目が追えないため）。
+     出すのは「点数」と「オッズ」だけ。口数や払戻想定は出さない。 */
+  .ogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(102px,1fr));gap:7px;margin-top:6px}
+  .ocard{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:8px 5px;text-align:center}
+  .ocard.top{border-color:var(--away)}
+  .ocard .sc{font-weight:700;font-size:.88rem;letter-spacing:.05em}
+  .ocard .lab{font-size:.6rem;color:var(--muted);margin-top:3px}
+  .ocard .od{font-weight:700;font-size:1.12rem;font-variant-numeric:tabular-nums;margin-top:1px}
+  .ocard.top .od{color:var(--away)}
+  .ocard .cmp{font-size:.6rem;color:var(--muted);margin-top:5px;line-height:1.4}
+  .ohead{font-size:.75rem;font-weight:700;margin:12px 0 0}
+  .ohead .sub{font-weight:400;color:var(--muted);font-size:.7rem;margin-left:6px}
+
   .oddsrow b{font-variant-numeric:tabular-nums}
 
   .bar{background:var(--line);border-radius:3px;height:8px;overflow:hidden;min-width:56px}
@@ -2908,31 +2921,49 @@ function renderWeek() {
           od.at ? " ／ " + jstLabel(od.at) + " 時点" : ""}</span>
         <span><button data-oclr="${key}" title="この試合の倍率を消す">消す</button></span>
       </div>` : "";
-    /* スコアごとの突き合わせ。モデルが持っているのと同じ単位で並ぶ */
+    /* スコアごとの突き合わせ。本家と同じ並べ方（カード）にする。
+       1枚に出すのは「点数」と「オッズ」、それに小さくモデルとの比較だけ。 */
+    const cheapest = od.opts.reduce((m, o) => (o.odds < m.odds ? o : m), od.opts[0]);
+    /* 本家の並び順。勝った側の得点が少ない順、打ち切りは最後 */
+    const ordOf = (o) => o.over
+      ? [1, 0, 0]
+      : [0, o.k === "a" ? o.ag : o.hg, o.k === "a" ? o.hg : o.ag];
+    const cardOf = (o) => {
+      const mp = modelPOf(p.grid, o);
+      const d = (mp - o.p) * 100;
+      const nm2 = o.over ? `${o.hg ?? o.ag}点以上` : `${o.hg} - ${o.ag}`;
+      return `<div class="ocard${o === cheapest ? " top" : ""}">
+        <div class="sc">${esc(nm2)}</div>
+        <div class="lab">オッズ</div>
+        <div class="od">${o.odds.toFixed(1)}</div>
+        <div class="cmp">みんな ${pct(o.p)}%<br>モデル ${pct(mp)}%
+          <span class="${d > 1 ? "up" : d < -1 ? "down" : ""}">${d > 0 ? "+" : ""}${d.toFixed(1)}</span></div>
+      </div>`;
+    };
+    const groupOf = (k, label) => {
+      const list = od.opts.filter((o) => o.k === k)
+        .sort((x, y) => { const a2 = ordOf(x), b2 = ordOf(y);
+          return a2[0] - b2[0] || a2[1] - b2[1] || a2[2] - b2[2]; });
+      if (!list.length) return "";
+      const gp = list.reduce((s2, o) => s2 + o.p, 0);
+      const gm = list.reduce((s2, o) => s2 + modelPOf(p.grid, o), 0);
+      return `<div class="ohead">${esc(label)}
+          <span class="sub">みんな ${pct(gp)}% ／ モデル ${pct(gm)}%</span></div>
+        <div class="ogrid">${list.map(cardOf).join("")}</div>`;
+    };
     const oddsBlock = od ? `
       <details class="det"${openOdds === key ? " open" : ""}>
         <summary>WINNERの倍率とモデルの差（${od.n}口）</summary>
-        <div class="scroll" style="margin-top:6px">
-        <table>
-          <thead><tr><th>口</th><th>倍率</th><th>WINNER</th><th>モデル</th><th>差</th></tr></thead>
-          <tbody>${od.opts.map((o) => {
-            const mp = modelPOf(p.grid, o);
-            const d = (mp - o.p) * 100;
-            return `<tr>
-              <td>${esc(o.over ? (o.k === "h" ? f.h : o.k === "a" ? f.a : "引分") + ` ${o.hg ?? o.ag}点以上` : o.label)}</td>
-              <td>${o.odds.toFixed(1)}</td>
-              <td>${pct(o.p)}%</td>
-              <td>${pct(mp)}%</td>
-              <td class="${d > 1 ? "up" : d < -1 ? "down" : ""}">${d > 0 ? "+" : ""}${d.toFixed(1)}pt</td>
-            </tr>`;
-          }).join("")}</tbody>
-        </table>
-        </div>
-        <div class="hint" style="margin-top:6px">
-          「モデル」がこのアプリの見立て、「WINNER」が<b>みんなの金の入り方</b>です。
+        ${groupOf("h", `${FULL[f.h] ?? f.h} 勝利`)}
+        ${groupOf("d", "引分")}
+        ${groupOf("a", `${FULL[f.a] ?? f.a} 勝利`)}
+        <div class="hint" style="margin-top:10px">
+          <b>赤いカード</b>がいちばん倍率の低い口＝いちばん金が入っている口です。
+          「みんな」は<b>金の入り方</b>、「モデル」はこのアプリの見立て、
+          右の数字はその差（pt）。<br>
           WINNER の倍率は投票状況で決まり還元率は約50%なので、
           1/倍率 の合計を1に割り戻してあります。<b>当たりやすさそのものではありません。</b>
-          倍率は販売締切まで動きます。表示だけで、モデルにも的中率にも使いません。
+          倍率は販売締切まで動きます。<b>表示だけで、モデルにも的中率にも使いません。</b>
         </div>
       </details>` : "";
     const pickBlock = `
