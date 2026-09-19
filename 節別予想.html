@@ -215,6 +215,7 @@
   .pickrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;
            padding-top:9px;border-top:1px dashed var(--line)}
   .plab{font-size:.72rem;font-weight:700;color:var(--muted);min-width:5.2em}
+  .mini{padding:3px 9px;font-size:var(--fs-xs);line-height:1.5}
   .peers{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
   .peer{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;
         border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--panel)}
@@ -3085,8 +3086,11 @@ function renderWeek() {
         <div class="score">${pinp(0, my?.[0])}<span class="sep">-</span>${pinp(1, my?.[1])}${
           my && !closed ? `<button data-pclr="${key}" title="予想を消す" aria-label="予想を消す">×</button>` : ""}</div>
         ${judge(my)}${lateTag(myFlag)}
-        <span class="hint">${isSealed(w) ? "封印済み・変更できません"
+        <span class="hint">${isSealed(w)
+            ? (roundClosed(w) ? "封印済み・締切も過ぎているので変更できません" : "封印済み・変更できません")
           : isClosed(w, i) ? "締切済み・変更できません" : deadlineLabel(w, i)}</span>
+        ${isSealed(w) && !roundClosed(w)
+          ? `<button class="mini" data-unseal="${w}">封印を解く</button>` : ""}
       </div>${peerRow}`;
     const mid = r
       ? `<div class="done">${r[0]} - ${r[1]}</div>
@@ -3339,6 +3343,14 @@ function renderWeek() {
     $("shareio").value = sealMessage(w);
     $("shareio").select();
   });
+  /* 入力欄のそばに置いた「封印を解く」。節の上のパネルのものと同じ動き */
+  for (const el of $("week").querySelectorAll("button[data-unseal]")) {
+    el.addEventListener("click", () => {
+      if (!confirm("封印を解きます。チャットに貼ったコードは無効になります。よろしいですか？")) return;
+      unsealRound(Number(el.dataset.unseal));
+      renderWeek(); renderShare();
+    });
+  }
   $("sealOff")?.addEventListener("click", () => {
     if (!confirm("封印を解きます。チャットに貼ったコードは無効になります。よろしいですか？")) return;
     unsealRound(w);

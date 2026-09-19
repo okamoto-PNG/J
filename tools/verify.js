@@ -1403,6 +1403,33 @@ function runWithFakeDom(seed) {
       (made.get("outList")?.innerHTML ?? "").length > 0);
   }
 
+  /* 1-b) 封印した節。入力できない理由と、その場で解く手立てが出ること。
+     「変更できません」とだけ言われて、どうすればいいか分からない状態を防ぐ。 */
+  {
+    const sealed = JSON.stringify({
+      v: 4, lg: "J1",
+      store: { J1: { results: {}, cond: {}, week: 38,
+        picks: { "38.0": [1, 0] }, pickAt: { "38.0": 1 }, sealed: { 38: 1 },
+        odds: {}, oddsAt: {} }, J2: {} },
+      me: { name: "検算", salt: "0123456789abcdef" }, peers: { J1: {}, J2: {} },
+    });
+    let made3 = null, err3 = null;
+    try { made3 = runWithFakeDom(sealed); } catch (e) { err3 = e; }
+    check("封印した節でも最後まで描ける", !err3, err3 ? err3.message : "");
+    if (made3) {
+      const wk = made3.get("week")?.innerHTML ?? "";
+      check("封印した節では予想を入力できない",
+        (wk.match(/data-p="38\.\d+"[^>]*disabled/g) ?? []).length === 20,
+        (wk.match(/data-p="38\.\d+"[^>]*disabled/g) ?? []).length + "個");
+      check("封印した節でも結果は入力できる（止まるのは予想だけ）",
+        !/data-k="38\.\d+"[^>]*disabled/.test(wk));
+      /* 締切前なら解くボタン、締切後ならその旨。どちらも出ないのは不親切 */
+      check("入力欄のそばに、解く手立てか理由が出る",
+        wk.includes('data-unseal="38"') || wk.includes("締切も過ぎている"),
+        wk.includes('data-unseal="38"') ? "解くボタンあり" : "締切後の説明あり");
+    }
+  }
+
   /* 2) 倍率・結果・予想・他の人の予想が入っている状態。カードの側の道を通す */
   const seed = JSON.stringify({
     v: 4, lg: "J1",
