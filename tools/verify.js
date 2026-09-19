@@ -24,6 +24,15 @@ function check(label, cond, detail = "") {
   else { ng++; console.log(`  ❌ ${label}${detail ? "  … " + detail : ""}`); }
 }
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+/**
+ * ★中身を見るための読み取りは、必ずこれを通すこと。
+ *   このリポジトリは core.autocrlf=true なので、git pull / checkout のたびに
+ *   作業ツリーが CRLF になる。行で区切って探す検算はそれだけで落ちる
+ *   （実際「節別予想.html のモデルが Node で動く」が2度落ちた）。
+ *   ファイルが壊れていないかを見る検算（auto.js の退避と復元）は
+ *   1バイトも変えてはいけないので、そちらは素の readFileSync のままにする。
+ */
+const readText = (...p2) => fs.readFileSync(path.join(...p2), "utf8").replace(/\r\n/g, "\n");
 const section = (t) => console.log(`\n── ${t} ${"─".repeat(Math.max(0, 58 - t.length))}`);
 
 /* ═══════════════════════════════════════════════════ 1. J1 の過去成績 */
@@ -303,7 +312,7 @@ const mkey = (m) => m.s + "|" + m.h + "|" + m.a + "|" + m.hg + "|" + m.ag;
 
 /* --- index.html（J1 単発型。従来の作りのまま） --- */
 {
-  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const html = readText(ROOT, "index.html");
   const CLUBS = JSON.parse(html.match(/const CLUBS = (\[[\s\S]*?\]);/)[1]);
   const dm = html.match(/const DATA =([\s\S]*?);\n/);
   const DATA = [...dm[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]).join("");
@@ -325,7 +334,7 @@ const mkey = (m) => m.s + "|" + m.h + "|" + m.a + "|" + m.hg + "|" + m.ag;
 }
 
 /* --- 節別予想.html（J1・J2 の2リーグ） --- */
-const wk = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8");
+const wk = readText(ROOT, "節別予想.html");
 const HIST = appConst(wk, "HIST");
 const LEAGUES = appConst(wk, "LEAGUES");
 const AB = wk.match(/const AB = "([^"]*)";/)[1];
@@ -465,7 +474,7 @@ section("6. アプリのモデルを Node で実行");
  * これで「表示している精度＝実際に動いているコードの精度」を保証できる。
  */
 function loadAppModel(file) {
-  const html = fs.readFileSync(path.join(ROOT, file), "utf8");
+  const html = readText(ROOT, file);
   const script = html.match(/<script>\n?"use strict";([\s\S]*?)<\/script>/)[1];
   const cut = script.indexOf("   3) 状態");
   const body = script.slice(0, script.lastIndexOf("/* ===", cut));
@@ -491,7 +500,7 @@ function loadAppModel(file) {
 
 /** <script> の中身全体が構文的に正しいか（描画部分も含めて）確かめる */
 function syntaxOk(file) {
-  const html = fs.readFileSync(path.join(ROOT, file), "utf8");
+  const html = readText(ROOT, file);
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   try { new Function(script); return null; } catch (e) { return e.message; }
 }
@@ -603,7 +612,7 @@ section("6-b. 予想の採点と共有（節別予想.html）");
  * 数字を目で確かめるのではなく、答えの分かっている入力を通して検算する。
  */
 function loadAppScoring() {
-  const html = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8");
+  const html = readText(ROOT, "節別予想.html");
   const script = html.match(/<script>\n?"use strict";([\s\S]*?)<\/script>/)[1];
   const cut = script.indexOf("   5) 描画");
   if (cut < 0) return null;
@@ -888,7 +897,7 @@ if (!sc) {
       sc.STATE.results === sc.STORE[sc.LG].results &&
       sc.STATE.odds === sc.STORE[sc.LG].odds);
     /* コメントは外してから見る。外さないと、この決まりを説明した注意書き自身に当たる */
-    const code = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8")
+    const code = readText(ROOT, "節別予想.html")
       .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     check("入れ替えでの消去が残っていない（STATE.results = {} と書かない）",
       !/STATE\.(results|cond|picks|pickAt|sealed|odds)\s*=\s*\{\s*\}/.test(code),
@@ -1341,8 +1350,8 @@ section("6-f. 画面が最後まで描けること（節別予想.html）");
  * 見るのは「例外を投げずに最後まで行くか」と「入るべきものが入ったか」だけ。
  */
 function runWithFakeDom(seed) {
-  const src = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8")
-    .replace(/\r\n/g, "\n").match(/<script>\n?"use strict";([\s\S]*?)<\/script>/)[1];
+  const src = readText(ROOT, "節別予想.html")
+    .match(/<script>\n?"use strict";([\s\S]*?)<\/script>/)[1];
   const made = new Map();
   const mkEl = (id) => ({
     id, innerHTML: "", textContent: "", value: "", disabled: false, dataset: {},
@@ -1461,7 +1470,7 @@ section("6-e. 日程が変わっても節の中の並びが動かない（tools/
     for (const f of ["節別予想.html", "index.html"])
       fs.copyFileSync(path.join(ROOT, f), path.join(work, f));
 
-    const before = rawOf(fs.readFileSync(path.join(work, "節別予想.html"), "utf8"), "J1");
+    const before = rawOf(readText(work, "節別予想.html"), "J1");
 
     /* 第2節の1試合を1週間ずらす（延期の再現） */
     const jf = path.join(work, "data", SI.files.J1.replace(/^.*[\\/]/, ""));
@@ -1474,7 +1483,7 @@ section("6-e. 日程が変わっても節の中の並びが動かない（tools/
 
     require("child_process").execFileSync(process.execPath, [path.join(work, "tools", "build.js")],
       { cwd: work, stdio: "pipe" });
-    const after = rawOf(fs.readFileSync(path.join(work, "節別予想.html"), "utf8"), "J1");
+    const after = rawOf(readText(work, "節別予想.html"), "J1");
 
     check("延期を起こしても節の中の並びが変わらない（入力が別の試合に付け替わらない）",
       Boolean(before) && before === after,
@@ -1512,8 +1521,8 @@ const addonFile = path.join(ROOT, "tools", "sync-addon.html");
 if (!fs.existsSync(pubFile) || !fs.existsSync(addonFile)) {
   check("publish/index.html と tools/sync-addon.html がある", false, "node tools/publish.js を実行していない？");
 } else {
-  const pub = fs.readFileSync(pubFile, "utf8");
-  const addon = fs.readFileSync(addonFile, "utf8").trim();
+  const pub = readText(pubFile);
+  const addon = readText(addonFile).trim();
   const i2 = pub.indexOf(S_TAG), j2 = pub.indexOf(E_TAG);
   check("アドオンのブロックが入っている", i2 >= 0 && j2 > i2);
 
