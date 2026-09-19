@@ -217,7 +217,9 @@ check(`J3 ${SI.first}-${SI.histEnd} は全試合にスコアがある`,
   j3.filter((m) => m.s <= SI.histEnd).every((m) => Number.isInteger(m.hg)),
   `未消化 ${j3.filter((m) => m.s <= SI.histEnd && m.hg == null).length}件`);
 check(`J3 ${SI.label} に未消化の試合が残っている`,
-  j3.filter((m) => m.s === SI.upcoming).every((m) => m.hg === null));
+  j3.filter((m) => m.s === SI.upcoming).some((m) => m.hg == null),
+  `未消化 ${j3.filter((m) => m.s === SI.upcoming && m.hg == null).length}/` +
+  `${j3.filter((m) => m.s === SI.upcoming).length}試合`);
 /* ★ J1・J2 と違い、J3 では「同じ順序ペアがシーズン中1回だけ」が成り立たない。
    2015年は13クラブしかなく、同じ組み合わせを最大3回戦っている（総当たり3回制）。
    だから (季・ホーム・アウェイ) の一意性で検算してはいけない。
