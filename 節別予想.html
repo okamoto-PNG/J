@@ -152,6 +152,13 @@
   .form i.l{background:var(--los)}
   .formnon{color:var(--muted)}            /* まだ結果が1つも無いクラブ */
 
+  /* いま開いている場所と、そこに入っている量。「消えた」を探すための手がかり */
+  .wherebox{border:1px solid var(--line);border-radius:10px;background:var(--panel2);
+    padding:10px 12px;margin-bottom:10px;font-size:var(--fs-sm)}
+  .wherebox.empty{border-color:var(--warn);
+    background:color-mix(in srgb, var(--warn) 7%, var(--panel2))}
+  .wherebox code{font-size:var(--fs-xs);background:var(--line);border-radius:4px;padding:1px 5px}
+
   /* WINNER の倍率。本家と同じくカードで並べる（表だと目が追えないため）。
      出すのは「点数」と「オッズ」だけ。口数や払戻想定は出さない。 */
   .ogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));
@@ -387,6 +394,7 @@
 
   <section>
     <h2>データ <span class="tag">この端末のブラウザに自動保存されます</span></h2>
+    <div id="wherebox"></div>
     <div class="row">
       <button id="exp">書き出し（JSON）</button>
       <button id="imp">読み込み</button>
@@ -2123,6 +2131,34 @@ function snapshot(why) {
   } catch (e) { /* 取っておけなくても、本筋は止めない */ }
 }
 
+/**
+ * いま保存されている場所と、そこに入っている量。
+ *
+ * ★ブラウザの保存は「出どころ」ごとに分かれている。
+ *   公開ページ・パソコン内のファイル・別のブラウザ・スマホのホーム画面から開いたもの、
+ *   これらは全部**別の入れ物**で、互いに見えない。
+ *   「消えた」の大半は、消えたのではなく別の入れ物を開いている。
+ *   だから、いまどこを見ていて何が入っているかを画面に出す。
+ */
+function whereAmI() {
+  const n = (o) => Object.keys(o ?? {}).length;
+  let origin = "この端末", local = false;
+  try {
+    const href = String(location.href);
+    local = href.startsWith("file:");
+    const m = href.match(/^([a-z]+:\/\/[^/]+)/i);
+    origin = local ? "パソコンの中のファイル（file://）" : (m ? m[1] : "この端末");
+  } catch { /* 取れなければ既定のまま */ }
+  return {
+    origin, local,
+    results: n(STORE.J1?.results) + n(STORE.J2?.results),
+    picks: n(STORE.J1?.picks) + n(STORE.J2?.picks),
+    peers: n(PEERS.J1) + n(PEERS.J2),
+    cond: n(STORE.J1?.cond) + n(STORE.J2?.cond),
+    name: ME.name.trim(),
+  };
+}
+
 /** 戻せるものがあるか。あれば中身の要約も返す */
 function undoInfo() {
   try {
@@ -2786,10 +2822,22 @@ function importShare(text) {
   const got = parseShare(text);
   if (!got) return null;
   if (got.name === (ME.name.trim() || "名前なし")) return { ...got, self: true };
-  (PEERS[got.lg] ??= {})[got.name] =
-    { picks: got.picks, flags: got.flags, salt: got.salt, sealed: got.sealed };
+  /* ★差し替えではなく**足し合わせる**。
+     相手が自分のデータを失ったあとに送り直すと、中身の薄い共有文字列が届く。
+     丸ごと差し替えていたせいで、こちらが受け取ってあった過去の予想まで消えていた。
+     同じ試合については新しいほうを採り、入っていない試合は今まで持っていたものを残す。
+     ※相手が予想を「消した」場合は消えないが、過去の予想が黙って失われるより良い。 */
+  const box = (PEERS[got.lg] ??= {});
+  const old = box[got.name];
+  const oldPicks = old ? (old.picks ?? old) : {};
+  box[got.name] = {
+    picks: { ...oldPicks, ...got.picks },
+    flags: { ...(old?.flags ?? {}), ...got.flags },
+    salt: got.salt || old?.salt || "",
+    sealed: { ...(old?.sealed ?? {}), ...got.sealed },
+  };
   save();
-  return got;
+  return { ...got, kept: Object.keys(oldPicks).length };
 }
 
 /* 貼り付けから共有文字列を拾うための下ごしらえ。
@@ -3726,6 +3774,39 @@ function renderTabs() {
   document.title = `${LG} 節別予想 2026-27`;
 }
 
+/**
+ * いま見ている場所と中身。「データが消えた」と思ったとき、
+ * ここを見比べれば、どの場所に入っているかがすぐ分かる。
+ */
+function renderWhere() {
+  const el = $("wherebox");
+  if (!el) return;
+  const w2 = whereAmI();
+  const empty = !w2.results && !w2.picks && !w2.peers;
+  el.innerHTML = `
+    <div class="wherebox${empty ? " empty" : ""}">
+      <div><b>いま開いている場所</b>：<code>${esc(w2.origin)}</code></div>
+      <div style="margin-top:4px">ここに入っているもの：
+        結果 <b>${w2.results}</b>件 ／ あなたの予想 <b>${w2.picks}</b>件 ／
+        仲間の予想 <b>${w2.peers}</b>人 ／ 離脱者 <b>${w2.cond}</b>件${
+          w2.name ? " ／ 名前 <b>" + esc(w2.name) + "</b>" : ""}</div>
+      ${w2.local ? `<div class="hint" style="margin-top:6px">
+        <b>これはパソコンの中のファイルです。</b>公開ページとは<b>別の入れ物</b>で、
+        入れたものは互いに見えません。
+        <b>試合結果の自動取り込みも、ここには入っていません</b>
+        （画面のいちばん上に「最新の結果を取り込む」が出るほうが公開ページです）。
+        ふだんは公開ページのほうを開いてください。</div>` : ""}
+      ${empty ? `<div class="hint" style="margin-top:6px">
+        <b>ここは空です。</b>入れたはずのものがある場合、<b>別の場所</b>を開いています。
+        ブラウザの保存は開いた場所ごとに分かれていて、互いに見えません。<br>
+        心当たり：<b>いつものリンク</b>／<b>パソコンの中のファイル</b>／
+        <b>別のブラウザ</b>／<b>スマホのホーム画面に置いたアイコン</b>（Safari本体とは別扱いです）。<br>
+        心当たりを開いて、この行の数字が入っているほうが「本物」です。
+        見つけたら、そちらで「書き出し（JSON）」→ こちらで「読み込み」。
+        間違えても「元に戻す」で戻せます。</div>` : ""}
+    </div>`;
+}
+
 /** 「元に戻す」。戻せるものがあるときだけ出す（ふだんは何も出ない） */
 function renderUndo() {
   const el = $("undobox");
@@ -3749,7 +3830,8 @@ function renderUndo() {
 
 function renderAll() {
   renderTabs(); renderTableNote(); renderBadges(); renderNav(); renderWeek();
-  renderTable(); renderSim(); renderCond(); renderScore(); renderShare(); renderUndo();
+  renderTable(); renderSim(); renderCond(); renderScore(); renderShare();
+  renderWhere(); renderUndo();
 }
 
 /* ==========================================================================

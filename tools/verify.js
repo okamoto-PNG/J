@@ -1345,9 +1345,23 @@ if (!sc) {
   sc.importShare(["2", "J1", encodeURIComponent("鈴木"), sc.encodePicks(two),
     sc.encodeFlags(two, { "1.0": dl10 - 1000, "1.1": sc.deadlineOf(1, 1) - 1000 })].join("~"));
   const suzu = sc.PEERS.J1["鈴木"];
-  check("同じ名前で送り直すと差し替わる（増殖しない）",
-    Object.keys(suzu?.picks ?? {}).length === 2 && suzu.picks["1.0"][1] === 1,
-    JSON.stringify(suzu?.picks));
+  check("同じ名前で送り直しても増殖しない（1人のまま）",
+    Object.keys(sc.PEERS.J1).filter((k) => k === "鈴木").length === 1);
+  check("同じ試合は新しいほうで上書きされる", suzu?.picks?.["1.0"]?.[1] === 1,
+    JSON.stringify(suzu?.picks?.["1.0"]));
+  /* ★中身の薄い共有文字列が届いても、前に受け取った予想を消さないこと。
+     相手がデータを失って送り直したときに、こちらの控えまで道連れにしない。 */
+  {
+    const before = Object.keys(sc.PEERS.J1["鈴木"].picks).length;
+    sc.importShare(["3", "J1", encodeURIComponent("鈴木"),
+      sc.encodePicks({ "9.9": [3, 3] }), sc.encodeFlags({ "9.9": [3, 3] }, {}),
+      "abcdef0123456789", sc.encodeSealed({})].join("~"));
+    const after = sc.PEERS.J1["鈴木"].picks;
+    check("中身の薄い共有が来ても、前の予想は残る",
+      Object.keys(after).length === before + 1 && after["1.0"] && after["9.9"],
+      `${before}件 → ${Object.keys(after).length}件`);
+    delete after["9.9"];
+  }
   check("他の人の締切前フラグも受け取れる", suzu?.flags?.["1.0"] === "o" && suzu?.flags?.["1.1"] === "o",
     JSON.stringify(suzu?.flags));
   check("旧形式（予想だけ）で保存された他の人も採点できる", (() => {
