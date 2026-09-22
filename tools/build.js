@@ -270,7 +270,11 @@ function koCode(m) {
 function prevWeekOrder(key) {
   const out = new Map();
   try {
-    const src = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8");
+    /* ★CRLF のままだと、下の正規表現（\n で区切っている）が当たらない。
+       当たらなくても例外にはならず、「引き継ぐものが無い」と見なして
+       並びを作り直してしまう＝守っているつもりで守れていない状態になる。
+       core.autocrlf=true なので git pull のたびにこうなる。必ず LF に揃えること。 */
+    const src = fs.readFileSync(path.join(ROOT, "節別予想.html"), "utf8").replace(/\r\n/g, "\n");
     /* leagueBlock が書く形にそのまま合わせる。緩くすると、
        HIST の "J2: { clubs: ..." に当たったあと J1 の teams を拾ってしまう。 */
     const blk = src.match(new RegExp(
@@ -296,7 +300,7 @@ function prevWeekOrder(key) {
 function fixturesOf(rows, teams, key) {
   const idx = new Map(teams.map((c, i) => [c, i]));
   const prev = key ? prevWeekOrder(key) : new Map();
-  let raw = "", kicks = "", kept = 0, redone = 0;
+  let raw = "", kicks = "", scores = "", kept = 0, redone = 0;
   for (let w = 1; w <= WEEKS; w++) {
     let week = rows.filter((m) => m.round === w)
       .sort((a, b) => ((a.date ?? "9") < (b.date ?? "9") ? -1 : 1));
@@ -310,17 +314,28 @@ function fixturesOf(rows, teams, key) {
     for (const m of week) {
       raw += AB[idx.get(m.h)] + AB[idx.get(m.a)];
       kicks += koCode(m);
+      /* 公式データの結果。1試合2文字（36進数で得点2つ）、未消化は ".."。
+         これを焼き込んでおけば、アプリはどこにも通信せずに結果を出せる。 */
+      /* 1試合2文字。b36pad は常に2桁に詰めるので、ここでは使わない（使うと4文字になる） */
+      const one = (g) => Math.max(0, Math.min(35, g)).toString(36);
+      scores += (m.hg == null || m.ag == null) ? ".." : one(m.hg) + one(m.ag);
     }
   }
   if (key) {
-    console.log(`  ・ ${key} 節の並び: ${kept}節を引き継ぎ / ${redone}節を作り直し / ` +
-      `${WEEKS - kept - redone}節は新規`);
+    const fresh = WEEKS - kept - redone;
+    console.log(`  ・ ${key} 節の並び: ${kept}節を引き継ぎ / ${redone}節を作り直し / ${fresh}節は新規`);
+    /* ★「全部が新規」は、初回を除けば引き継ぎに失敗した合図。
+       黙って通すと、日程が変わったときに利用者の入力が別の試合に付け替わる。 */
+    if (fresh === WEEKS && prev.size === 0) {
+      console.log(`    ⚠ ${key}: 前回の並びを取り出せなかった。`
+        + `初回なら正常。そうでなければ 節別予想.html の形か改行コードを確かめること`);
+    }
   }
   const dates = Array.from({ length: WEEKS }, (_, i) => {
     const ds = rows.filter((m) => m.round === i + 1 && m.date).map((m) => m.date).sort();
     return ds[0] ?? null;
   });
-  return { raw, dates, kicks };
+  return { raw, dates, kicks, scores };
 }
 
 const HIST_J1 = histOf(j1, "節別予想.html", /J1: \{ clubs: (\[[\s\S]*?\]), data:/);
@@ -355,6 +370,7 @@ const leagueBlock = (key, label, teams, fx, P, prom, byClub = {}, hasHistory = n
   `    fixturesRaw:\n      ${wrap(fx.raw, 80, "      ")},\n` +
   `    roundDates: ${JSON.stringify(fx.dates).replace(/","/g, '", "')},\n` +
   `    kickoffs:\n      ${wrap(fx.kicks, 80, "      ")},\n` +
+  `    results:\n      ${wrap(fx.scores, 80, "      ")},\n` +   // 公式データの結果
   `    P: ${pobj(P)},\n` +
   `    promoted: ${num(prom)},\n` +
   byClubBlock(byClub, teams, hasHistory) +

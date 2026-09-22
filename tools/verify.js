@@ -435,6 +435,41 @@ for (const L of LG_SPEC) {
     console.log(`     ${L.key} 締切: 日程未定 ${noDate}試合 / K/O時刻未発表 ${noKo}試合（当日0時締切になる）`);
   }
 
+  /* 焼き込んだ公式の結果。
+     ★これがアプリの結果の出どころ。Wikipedia ではなく Jリーグ公式データを
+       build.js が焼き込んでいるので、ブラウザは通信せずに結果を出せる。
+     ★並びは前回から引き継ぐことがあるので、位置ではなく**対戦カード**で突き合わせる。 */
+  if (typeof G.results === "string" && G.fixturesRaw?.length === N_MATCH * 2) {
+    check(L.key + ` の results が${N_MATCH * 2}文字（${N_MATCH}試合×2文字）`,
+      G.results.length === N_MATCH * 2, String(G.results.length));
+    const perW = SI.leagues[L.key].perWeek, clubs = SI.leagues[L.key].clubs;
+    const byCard = new Map(L.fixtures.map((m) => [m.round + "|" + m.h + "|" + m.a, m]));
+    const one = (g) => Math.max(0, Math.min(35, g)).toString(36);
+    let bad = 0, filled = 0, firstBad = "";
+    for (let w = 0; w < SI.leagues[L.key].weeks; w++) {
+      for (let i2 = 0; i2 < perW; i2++) {
+        const at = w * clubs + i2 * 2;
+        const h = G.teams[AB.indexOf(G.fixturesRaw[at])];
+        const a = G.teams[AB.indexOf(G.fixturesRaw[at + 1])];
+        const m = byCard.get((w + 1) + "|" + h + "|" + a);
+        const code = G.results.slice((w * perW + i2) * 2, (w * perW + i2) * 2 + 2);
+        const want = (!m || m.hg == null || m.ag == null) ? ".." : one(m.hg) + one(m.ag);
+        if (code !== "..") filled++;
+        if (code !== want) {
+          bad++;
+          if (!firstBad) firstBad = `第${w + 1}節 ${h}-${a} 埋め込み"${code}" / 公式"${want}"`;
+        }
+      }
+    }
+    const official = L.fixtures.filter((m) => m.hg != null).length;
+    check(L.key + " の results が公式データと一致（対戦カードで突き合わせ）", bad === 0, firstBad);
+    check(L.key + ` の results の件数が公式と同じ（${official}試合）`,
+      filled === official, `埋め込み${filled} / 公式${official}`);
+  } else {
+    check(L.key + " に results が焼き込まれている", false,
+      "build.js を実行して results を入れること");
+  }
+
   /* 日程 */
   check(L.key + ` の fixturesRaw が${N_MATCH * 2}文字`, G.fixturesRaw.length === N_MATCH * 2, G.fixturesRaw.length + "文字");
   check(L.key + ` の所属クラブが${SI.leagues[L.key].clubs}`, G.teams.length === SI.leagues[L.key].clubs, String(G.teams.length));
@@ -1474,8 +1509,18 @@ function runWithFakeDom(seed) {
     check("予想の入力欄が20個（10試合×2）", count(wk, /data-p="/g) === 20,
       count(wk, /data-p="/g) + "個");
     check("結果の入力欄も20個", count(wk, /data-k="/g) === 20, count(wk, /data-k="/g) + "個");
-    check("確率バーが10本", count(wk, /<div class="prob">/g) === 10);
+    /* 結果が入っている試合には確率バーを出さない（もう終わった試合なので）。
+       公式の結果が焼き込まれたぶん、節によっては10本に満たない。
+       「バー＋確定スコア＝10」で見る。 */
+    check("確率バーと確定スコアの合計が10",
+      count(wk, /<div class="prob">/g) + count(wk, /<div class="done">/g) === 10,
+      `バー${count(wk, /<div class="prob">/g)} + 確定${count(wk, /<div class="done">/g)}`);
     check("順位表が描ける", (made.get("table")?.innerHTML ?? "").includes("<table>"));
+    /* ★まっさらな状態でも、焼き込んだ公式の結果が入ること（通信は一切しない） */
+    check("まっさらでも公式の結果が入る", (() => {
+      const saved = made.get("__store__") ? null : null;   // 保存は runWithFakeDom の外
+      return (made.get("table")?.innerHTML ?? "").match(/<b>[1-9]/) !== null;
+    })(), "順位表に勝ち点が出ているかで見る");
     check("戻せるものが無ければ「元に戻す」は出ない",
       (made.get("undobox")?.innerHTML ?? "") === "",
       (made.get("undobox")?.innerHTML ?? "").slice(0, 40));

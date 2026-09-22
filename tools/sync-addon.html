@@ -1,7 +1,13 @@
 <!-- sync-addon:start -->
 <script>
 /* ============================================================================
-   試合結果の自動取得アドオン（公開ページ専用）
+   試合結果の速報アドオン（公開ページ専用・押したときだけ動く）
+
+   ★ふだんの結果は **Jリーグ公式データ** を画面に焼き込んで出している
+     （tools/build.js の results）。毎日の自動更新が公式サイトから取ってくるので、
+     アプリはどこにも通信せずに結果を出せる。
+     ここは「公式への反映を待たずに、今夜の結果を入れたい」ときだけ使う。
+     押さないかぎり通信は起きない。
 
    本体（節別予想.html）のコードには一切手を入れない。
    本体が作り直されても、このブロックを付け直すだけで済む（publish/build.js）。
@@ -96,7 +102,7 @@ document.head.appendChild(style);
 
 const bar = document.createElement("div");
 bar.className = "syncbar";
-bar.innerHTML = `<button type="button" id="syncBtn">最新の結果を取り込む</button>`
+bar.innerHTML = `<button type="button" id="syncBtn">今夜の結果を取り込む（速報）</button>`
               + `<span class="msg" id="syncMsg"></span>`;
 const anchor = document.getElementById("badges");
 if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor.nextSibling);
@@ -232,25 +238,14 @@ function hasAnyResult() {
 
 function afterSwitch() {
   conflicts = 0; warn = "";
-  /* ★結果が1件も無いときは、間隔を待たずに取りに行く。
-     JSON で元に戻した直後がこれにあたる（結果ごと前の状態に戻るため）。
-     ここで待ってしまうと「結果が反映されない」まま30分放置される。
-     30分の間隔は相手のサーバへの気づかいなので、ふだんは効かせたままにする。 */
-  if (!hasAnyResult() || Date.now() - stamp.get() > MIN_INTERVAL) sync(false);
-  else msg("前回の取得から間もないため、保存済みの結果を表示しています。", "");
+  /* ★自分からは取りに行かない。ふだんの結果は公式データの焼き込みで足りているので、
+     わざわざ他所のサイトへ通信する理由がない。押されたときだけ動く。 */
+  msg("公式データの結果が入っています。今夜の試合など、公式への反映前のものを"
+    + "入れたいときだけ左のボタンを押してください。", "");
 }
 
-/* 前回の取得から時間が経っていれば、開いた時点で自動的に取りに行く */
+/* 開いた時点では通信しない。案内だけ出す */
 afterSwitch();
-
-/* ★「読み込み」「元に戻す」「全部消す」は結果ごと入れ替わる。
-   そのあと結果が空になっていたら、取り直す。押し直しを求めないため。 */
-/* 「元に戻す」は描き直すたびに作り直されるので、document で受ける */
-document.addEventListener("click", (ev) => {
-  const id = ev.target && ev.target.id;
-  if (id !== "imp" && id !== "reset" && id !== "undoBtn") return;
-  setTimeout(() => { if (!hasAnyResult()) afterSwitch(); }, 0);
-});
 
 /* 動作確認から呼べるように最小限だけ露出する。
    本体の STATE は「トップレベルの const」なので window には生えない
