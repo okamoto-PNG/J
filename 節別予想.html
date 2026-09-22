@@ -405,7 +405,8 @@
     <div class="note">
       保存先は<b>この端末のこのブラウザだけ</b>です。パソコンとスマホで同じ状態にしたいときは、
       片方で「書き出し」→ JSONをコピー → もう片方で貼って「読み込み」してください。
-      こちらは<b>結果も離脱者も含めた丸ごとの引っ越し用</b>です（共有には上の欄を使ってください）。<br>
+      こちらは<b>結果・予想・離脱者・仲間の予想・名前まで含めた丸ごとの引っ越し用</b>です
+      （共有には上の欄を使ってください）。<br>
       <b>2台目で予想を打ち直さないでください。</b>
       予想を入れた時刻も端末ごとに記録されるので、打ち直すとその時刻が「いま」になり、
       すでに始まった試合の予想は<b>締切後＝採点対象外</b>になります。
@@ -2135,7 +2136,12 @@ const curMatches = () => Object.entries(STATE.results).map(([k, v]) => {
 
 function refit() { STATE.fit = fitRatings(curMatches()); STATE.sim = null; }
 
+/* ★読み込みに失敗したまま保存すると、**本物を空で上書きして消してしまう**。
+     失敗したら以後いっさい書かない。画面にもそう出す（renderWhere）。 */
+let LOAD_BROKEN = false;
+
 function save() {
+  if (LOAD_BROKEN) return;                       // 壊れた状態で上書きしない
   try {
     STORE[LG].week = STATE.week;                 // week だけは数値なので書き戻す
     localStorage.setItem(KEY, JSON.stringify({ v: 4, lg: LG, store: STORE, me: ME, peers: PEERS }));
@@ -2234,7 +2240,11 @@ function load() {
     // 以前の版で入力した内容があれば引き継ぐ
     const old = JSON.parse(localStorage.getItem(OLD_KEY) ?? "null");
     if (old) STORE.J1 = { ...blank(), results: old.results ?? {}, cond: old.cond ?? {}, week: old.week ?? 1 };
-  } catch (e) { /* 壊れていたら初期状態のまま */ }
+  } catch (e) {
+    /* ★ここに来たら、保存されている中身を読めていない。
+       そのまま書き戻すと本物を潰すので、以後は書かない。 */
+    LOAD_BROKEN = true;
+  }
 }
 
 /* ==========================================================================
@@ -3848,6 +3858,18 @@ function renderWhere() {
   if (!el) return;
   const w2 = whereAmI();
   const empty = !w2.results && !w2.picks && !w2.peers;
+  if (LOAD_BROKEN) {
+    el.innerHTML = `
+      <div class="wherebox empty">
+        <div><b>保存されている中身を読み取れませんでした。</b></div>
+        <div class="hint" style="margin-top:6px">
+          壊してしまわないよう、<b>この画面からは保存しません</b>（入力しても残りません）。
+          中身はブラウザに残ったままなので、<b>まだ「全部消す」を押さないでください</b>。
+          ページを開き直すと直ることがあります。直らない場合はお知らせください。
+        </div>
+      </div>`;
+    return;
+  }
   el.innerHTML = `
     <div class="wherebox${empty ? " empty" : ""}">
       <div><b>いま開いている場所</b>：<code>${esc(w2.origin)}</code></div>
@@ -3905,7 +3927,11 @@ function renderAll() {
 load();                 // 保存データを読む（LG もここで決まる）
 useLeague(LG);          // そのリーグのデータを読み込む
 bindLeague();           // STATE を繋ぐ
-if (fillOfficial()) save();   // 公式の結果で埋める（入っていない試合だけ）
+/* 公式の結果で埋める（入っていない試合だけ）。
+   ★ここで save() してはいけない。読み込みに失敗していた場合、
+     空の状態＋公式の結果で本物を上書きしてしまう。
+     埋めたぶんは次の操作のときに一緒に保存されるし、開くたびに埋め直される。 */
+fillOfficial();
 refit();
 STATE.week = Math.max(1, Math.min(WEEKS, STATE.week || firstOpenWeek()));
 // スマホは計算が遅いので既定の試行回数を控えめにする
@@ -3938,16 +3964,26 @@ $("sim").addEventListener("click", () => {
 
 $("exp").addEventListener("click", () => {
   STORE[LG].week = STATE.week;
-  $("io").value = JSON.stringify({ v: 2, lg: LG, store: STORE });   // 両リーグまとめて
+  /* ★仲間の予想（PEERS）と名前（ME）も必ず入れること。
+     入れ忘れていたせいで、この JSON で引っ越すと**仲間の予想が丸ごと消えていた**。
+     版2（それらが入っていない古い形）も読めるようにしてある。 */
+  $("io").value = JSON.stringify({ v: 3, lg: LG, store: STORE, me: ME, peers: PEERS });
   $("io").select();
 });
 $("imp").addEventListener("click", () => {
   try {
     const j = JSON.parse($("io").value);
     snapshot("読み込み");                        // 置き換える前のいまを取っておく
-    if (j && j.v === 2 && j.store) {
+    if (j && (j.v === 2 || j.v === 3) && j.store) {
       for (const k of ["J1", "J2"]) if (j.store[k]) STORE[k] = { ...blank(), ...j.store[k] };
       if (LEAGUES[j.lg]) { useLeague(j.lg); }
+      /* 版3から、仲間の予想と名前も運ぶ。版2（古い形）には入っていないので触らない */
+      if (j.v >= 3) {
+        if (j.me && typeof j.me.name === "string") {
+          ME = { name: j.me.name, salt: typeof j.me.salt === "string" ? j.me.salt : "" };
+        }
+        for (const k of ["J1", "J2"]) if (j.peers?.[k]) PEERS[k] = j.peers[k];
+      }
     } else {
       STORE.J1 = { results: j.results ?? {}, cond: j.cond ?? {}, week: j.week ?? 1 };
       useLeague("J1");

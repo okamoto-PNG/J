@@ -1470,7 +1470,9 @@ function runWithFakeDom(seed) {
   const mkEl = (id) => ({
     id, innerHTML: "", textContent: "", value: "", disabled: false, dataset: {},
     style: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-    addEventListener() {}, removeEventListener() {}, click() {}, focus() {}, select() {},
+    _h: {},
+    addEventListener(t, fn) { this._h[t] = fn; }, removeEventListener() {},
+    click() { this._h.click?.({ target: this }); }, focus() {}, select() {},
     setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
     querySelectorAll: () => [], querySelector: () => null, closest: () => null,
     appendChild: (x) => x, insertAdjacentHTML() {},
@@ -1492,6 +1494,8 @@ function runWithFakeDom(seed) {
   new Function("document", "localStorage", "location", "history", "window", "navigator",
     "alert", "confirm", '"use strict";' + src)(
     doc, ls, loc, { replaceState() {} }, win, nav, () => {}, () => true);
+  made.set("__store__", store);                 // 検算から保存の中身を見るため
+  made.set("__el__", el);                       // まだ触られていない要素も取れるように
   return made;
 }
 
@@ -1555,6 +1559,68 @@ function runWithFakeDom(seed) {
         wk.includes('data-unseal="38"') || wk.includes("締切も過ぎている"),
         wk.includes('data-unseal="38"') ? "解くボタンあり" : "締切後の説明あり");
     }
+  }
+
+  /* 1-c) 引き継ぎ（書き出し → 読み込み）。
+     ★ここに**仲間の予想と名前が入っていなかった**ため、JSON で引っ越すと
+       仲間の予想が丸ごと消えていた。ボタンを実際に押して往復させる。 */
+  {
+    const nn = (o) => Object.keys(o ?? {}).length;
+    const peers = {};
+    for (const nm of ["たろう", "じろう", "さぶろう"]) {
+      const picks = {};
+      for (let w = 1; w <= 3; w++) for (let i = 0; i < 10; i++) picks[`${w}.${i}`] = [1, 0];
+      peers[nm] = { picks, flags: {}, salt: "abcdef0123456789", sealed: {} };
+    }
+    const mine2 = {};
+    for (let w = 1; w <= 3; w++) for (let i = 0; i < 10; i++) mine2[`${w}.${i}`] = [2, 1];
+    const seedA = JSON.stringify({
+      v: 4, lg: "J1",
+      store: { J1: { results: {}, cond: { 鹿島: { out: [], mid: true } }, week: 4,
+        picks: mine2, pickAt: {}, sealed: {}, odds: {}, oddsAt: {} }, J2: {} },
+      me: { name: "わたし", salt: "0123456789abcdef" },
+      peers: { J1: peers, J2: {} },
+    });
+
+    let A = null, B = null, err4 = null;
+    try {
+      A = runWithFakeDom(seedA);
+      A.get("exp").click();
+      const json = A.get("io").value;
+      const parsed = JSON.parse(json);
+      check("書き出しに仲間の予想が入る", nn(parsed.peers?.J1) === 3,
+        `${nn(parsed.peers?.J1)}人`);
+      check("書き出しに名前が入る", parsed.me?.name === "わたし", String(parsed.me?.name));
+      check("書き出しに自分の予想と離脱者が入る",
+        nn(parsed.store?.J1?.picks) === 30 && nn(parsed.store?.J1?.cond) === 1);
+
+      /* まっさらな端末に読み込む */
+      B = runWithFakeDom(null);
+      B.get("__el__")("io").value = json;
+      B.get("__el__")("imp").click();
+      const after = JSON.parse(B.get("__store__").get("jleague-2627-weekly"));
+      check("読み込みで自分の予想が戻る", nn(after.store?.J1?.picks) === 30,
+        `${nn(after.store?.J1?.picks)}件`);
+      check("読み込みで仲間の予想が戻る", nn(after.peers?.J1) === 3,
+        `${nn(after.peers?.J1)}人`);
+      check("読み込みで名前が戻る", after.me?.name === "わたし", String(after.me?.name));
+      check("読み込みで離脱者も戻る", nn(after.store?.J1?.cond) === 1);
+    } catch (e) { err4 = e; }
+    check("引き継ぎの往復が例外を投げない", !err4, err4 ? err4.message : "");
+
+    /* 古い形（版2・仲間の予想が入っていない）も読めること */
+    try {
+      const old = JSON.stringify({ v: 2, lg: "J1",
+        store: { J1: { results: { "1.0": [3, 0] }, cond: {}, week: 1,
+          picks: {}, pickAt: {}, sealed: {} }, J2: {} } });
+      const C = runWithFakeDom(null);
+      C.get("__el__")("io").value = old;
+      C.get("__el__")("imp").click();
+      const after2 = JSON.parse(C.get("__store__").get("jleague-2627-weekly"));
+      check("古い形（版2）の引き継ぎも読める",
+        after2.store?.J1?.results?.["1.0"]?.[0] === 3,
+        JSON.stringify(after2.store?.J1?.results?.["1.0"]));
+    } catch (e) { check("古い形（版2）の引き継ぎも読める", false, e.message); }
   }
 
   /* 2) 倍率・結果・予想・他の人の予想が入っている状態。カードの側の道を通す */
