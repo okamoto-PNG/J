@@ -225,14 +225,32 @@ if (typeof switchLeague === "function") {
     b.addEventListener("click", () => afterSwitch());
   }
 }
+/** そのリーグの結果が1件でも入っているか */
+function hasAnyResult() {
+  try { return Object.keys(STATE.results ?? {}).length > 0; } catch (e) { return true; }
+}
+
 function afterSwitch() {
   conflicts = 0; warn = "";
-  if (Date.now() - stamp.get() > MIN_INTERVAL) sync(false);
+  /* ★結果が1件も無いときは、間隔を待たずに取りに行く。
+     JSON で元に戻した直後がこれにあたる（結果ごと前の状態に戻るため）。
+     ここで待ってしまうと「結果が反映されない」まま30分放置される。
+     30分の間隔は相手のサーバへの気づかいなので、ふだんは効かせたままにする。 */
+  if (!hasAnyResult() || Date.now() - stamp.get() > MIN_INTERVAL) sync(false);
   else msg("前回の取得から間もないため、保存済みの結果を表示しています。", "");
 }
 
 /* 前回の取得から時間が経っていれば、開いた時点で自動的に取りに行く */
 afterSwitch();
+
+/* ★「読み込み」「元に戻す」「全部消す」は結果ごと入れ替わる。
+   そのあと結果が空になっていたら、取り直す。押し直しを求めないため。 */
+/* 「元に戻す」は描き直すたびに作り直されるので、document で受ける */
+document.addEventListener("click", (ev) => {
+  const id = ev.target && ev.target.id;
+  if (id !== "imp" && id !== "reset" && id !== "undoBtn") return;
+  setTimeout(() => { if (!hasAnyResult()) afterSwitch(); }, 0);
+});
 
 /* 動作確認から呼べるように最小限だけ露出する。
    本体の STATE は「トップレベルの const」なので window には生えない
